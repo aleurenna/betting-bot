@@ -25,33 +25,43 @@ export async function enviarTelegram(recomendaciones, bankroll = 20, moneda = 'U
   try {
     const mensaje = formatearMensaje(recomendaciones, bankroll, moneda);
     
-    const response = await axios.post(`${API_URL}/sendMessage`, {
-      chat_id: TELEGRAM_CHAT_ID,
-      text: mensaje,
-      parse_mode: 'HTML'
-    });
+    // Telegram límite: 4096 chars. Dividir si es necesario.
+    const chunks = splitMensaje(mensaje, 4000);
+    
+    for (const chunk of chunks) {
+      await axios.post(`${API_URL}/sendMessage`, {
+        chat_id: TELEGRAM_CHAT_ID,
+        text: chunk,
+        parse_mode: 'HTML'
+      });
+      // Pequeña pausa entre mensajes para evitar rate limit
+      if (chunks.length > 1) await new Promise(r => setTimeout(r, 500));
+    }
 
-    await db.registrarUsoCréditos(
-      0,
-      'telegram',
-      'all',
-      'all',
-      true
-    );
-
-    console.log('✅ Mensaje enviado a Telegram');
-    return response.data;
+    await db.registrarUsoCréditos(0, 'telegram', 'all', 'all', true);
+    console.log(`✅ Mensaje enviado a Telegram (${chunks.length} parte${chunks.length > 1 ? 's' : ''})`);
+    return true;
 
   } catch (error) {
     console.error('❌ Error enviando Telegram:', error.message);
     
-    await db.registrarUsoCréditos(
-      0,
-      'telegram',
-      'error',
-      'error',
-      false
-    );
+    // Si falla HTML, intentar sin parse_mode
+    try {
+      const mensajePlano = formatearMensaje(recomendaciones, bankroll, moneda)
+        .replace(/<[^>]*>/g, '');
+      const chunks = splitMensaje(mensajePlano, 4000);
+      for (const chunk of chunks) {
+        await axios.post(`${API_URL}/sendMessage`, {
+          chat_id: TELEGRAM_CHAT_ID,
+          text: chunk
+        });
+      }
+      console.log('✅ Mensaje enviado (texto plano fallback)');
+    } catch (e2) {
+      console.error('❌ Fallback también falló:', e2.message);
+    }
+    
+    await db.registrarUsoCréditos(0, 'telegram', 'error', 'error', false);
   }
 }
 
@@ -249,6 +259,49 @@ export async function enviarReporteDiario() {
   } catch (error) {
     console.error('❌ Error enviando reporte:', error.message);
   }
+}
+
+/**
+ * Divide mensaje largo en chunks respetando separadores
+ */
+function splitMensaje(texto, maxLen = 4000) {
+  if (texto.length <= maxLen) return [texto];
+  
+  const chunks = [];
+  const separador = '─'.repeat(50);
+  const partes = texto.split(separador);
+  
+  let chunk = '';
+  for (const parte of partes) {
+    if ((chunk + separador + parte).length > maxLen && chunk.length > 0) {
+      chunks.push(chunk.trim());
+      chunk = parte;
+    } else {
+      chunk += (chunk ? separador : '') + parte;
+    }
+  }
+  if (chunk.trim()) chunks.push(chunk.trim());
+  
+  // Si algún chunk sigue siendo muy largo, cortar por líneas
+  const resultado = [];
+  for (const c of chunks) {
+    if (c.length <= maxLen) {
+      resultado.push(c);
+    } else {
+      let sub = '';
+      for (const linea of c.split('\n')) {
+        if ((sub + '\n' + linea).length > maxLen) {
+          resultado.push(sub.trim());
+          sub = linea;
+        } else {
+          sub += (sub ? '\n' : '') + linea;
+        }
+      }
+      if (sub.trim()) resultado.push(sub.trim());
+    }
+  }
+  
+  return resultado;
 }
 
 export default {
