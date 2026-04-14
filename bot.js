@@ -16,20 +16,35 @@ const ODDS_API_KEY = process.env.ODDS_API_KEY;
 
 // Deportes disponibles según The Odds API - EXPANDIDOS
 const SPORTS = [
-  // FÚTBOL - Ligas Principales
+// ⚽ LIGAS PRINCIPALES EUROPEAS
   'soccer_epl',        // Premier League (Inglaterra)
   'soccer_la_liga',    // La Liga (España)
   'soccer_serie_a',    // Serie A (Italia)
   'soccer_bundesliga', // Bundesliga (Alemania)
   'soccer_ligue_1',    // Ligue 1 (Francia)
   
-  // BASKETBALL
-  'basketball_nba',       // NBA (USA)
-  'basketball_euroleague', // Euroleague (Europa)
+  // 🏆 COMPETICIONES EUROPEAS
+  'soccer_champions_league',  // UEFA Champions League
+  'soccer_europa_league',     // UEFA Europa League
   
-  // TENNIS
-  'tennis_atp',        // ATP (Hombres)
-  'tennis_wta'         // WTA (Mujeres)
+  // 🌎 LIGAS AMERICAS
+  'soccer_mls',                    // Major League Soccer (USA)
+  'soccer_mexico_primera_division', // Liga MX (México)
+  'soccer_brazil',                 // Campeonato Brasileño
+  
+  // 🆕 LIGAS ADICIONALES (Segundo Nivel)
+  'soccer_efl_championship',        // Segunda División Inglesa
+  'soccer_argentina_primera',       // Liga Argentina
+  'soccer_portugal_primeira_liga',  // Primeira Liga (Portugal)
+  'soccer_netherlands_eredivisie',  // Eredivisie (Holanda)
+  
+  // 🏀 BASKETBALL
+  'basketball_nba',
+  'basketball_euroleague',
+  
+  // 🎾 TENNIS
+  'tennis_atp',
+  'tennis_wta'
 ];
 
 // Regiones disponibles según The Odds API - TODAS LAS OPCIONES
@@ -61,6 +76,10 @@ export async function ejecutarBot() {
     
     console.log(`💰 Bankroll: ${simboloMoneda}${bankroll.toFixed(2)} ${moneda}`);
     
+    // Obtener eventos ya recomendados en los últimos 3 días para evitar duplicados
+    const eventosRecientes = await db.obtenerEventosRecientes(3);
+    console.log(`📋 Eventos recientes para evitar duplicados: ${eventosRecientes.length}`);
+    
     let recomendaciones = [];
     
     // Por cada deporte
@@ -70,8 +89,18 @@ export async function ejecutarBot() {
           const odds = await obtenerOdds(sport, region);
           
           if (odds && odds.length > 0) {
-            const analisis = await analizarOdds(odds, sport, region, bankroll, moneda);
-            recomendaciones = [...recomendaciones, ...analisis];
+            // Filtrar eventos que ya fueron recomendados
+            const oddsNoRepetidos = odds.filter(evento => {
+              return !eventosRecientes.some(prev => 
+                prev.evento === `${evento.home_team} vs ${evento.away_team}` &&
+                new Date(prev.fecha_evento).getDate() === new Date(evento.commence_time).getDate()
+              );
+            });
+            
+            if (oddsNoRepetidos.length > 0) {
+              const analisis = await analizarOdds(oddsNoRepetidos, sport, region, bankroll, moneda);
+              recomendaciones = [...recomendaciones, ...analisis];
+            }
           }
         } catch (error) {
           console.error(`❌ Error en ${sport} - ${region}:`, error.message);
@@ -85,7 +114,9 @@ export async function ejecutarBot() {
       .sort((a, b) => b.score - a.score)
       .slice(0, 10); // Top 10
     
-    console.log(`\n✅ Encontradas ${buenasApuestas.length} apuestas con EV+`);
+    console.log(`✅ Nuevas apuestas encontradas (sin repetidos): ${buenasApuestas.length}`);
+    
+    console.log(`✅ Nuevas apuestas encontradas (sin repetidos): ${buenasApuestas.length}`);
     
     // Guardar en BD
     for (const apuesta of buenasApuestas) {
@@ -122,6 +153,8 @@ export async function ejecutarBot() {
 
 /**
  * Obtiene odds de The Odds API
+ * Nota: API retorna eventos live + próximos (sin filtro específico de días)
+ * Filtramos en la BD para evitar eventos muy lejanos
  */
 async function obtenerOdds(sport, region) {
   try {
@@ -143,9 +176,18 @@ async function obtenerOdds(sport, region) {
     
     await db.registrarUsoCréditos(creditosUsados, 'odds', sport, region, true);
     
-    console.log(`📊 ${sport} (${region}): ${creditosRestantes} créditos restantes`);
+    // Filtrar eventos a próximos 3 días
+    const ahora = new Date();
+    const hace3Dias = new Date(ahora.getTime() + 3 * 24 * 60 * 60 * 1000);
     
-    return response.data;
+    const eventosFiltrados = response.data.filter(evento => {
+      const fechaEvento = new Date(evento.commence_time);
+      return fechaEvento <= hace3Dias;
+    });
+    
+    console.log(`📊 ${sport} (${region}): ${eventosFiltrados.length}/${response.data.length} eventos en próximos 3 días | ${creditosRestantes} créditos`);
+    
+    return eventosFiltrados;
     
   } catch (error) {
     console.error(`❌ Error obteniendo odds para ${sport}:`, error.message);
@@ -306,12 +348,27 @@ function analizarOutcome(data, recomendaciones, bankroll, moneda) {
  */
 function obtenerLiga(sport) {
   const ligas = {
-    // Fútbol
+    // Fútbol Europeo Principal
     'soccer_epl': 'Premier League',
     'soccer_la_liga': 'La Liga',
     'soccer_serie_a': 'Serie A',
     'soccer_bundesliga': 'Bundesliga',
     'soccer_ligue_1': 'Ligue 1',
+    
+    // Competiciones Europeas
+    'soccer_champions_league': 'Champions League',
+    'soccer_europa_league': 'Europa League',
+    
+    // Ligas Americas
+    'soccer_mls': 'MLS',
+    'soccer_mexico_primera_division': 'Liga MX',
+    'soccer_brazil': 'Campeonato Brasileño',
+    
+    // Ligas Adicionales (Segundo Nivel)
+    'soccer_efl_championship': 'EFL Championship',
+    'soccer_argentina_primera': 'Liga Argentina',
+    'soccer_portugal_primeira_liga': 'Primeira Liga',
+    'soccer_netherlands_eredivisie': 'Eredivisie',
     
     // Basketball
     'basketball_nba': 'NBA',

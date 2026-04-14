@@ -232,6 +232,31 @@ export async function obtenerEstadísticasSemanales() {
   }
 }
 
+export async function obtenerEventosRecientes(dias = 3) {
+  try {
+    const fechaLimite = new Date();
+    fechaLimite.setDate(fechaLimite.getDate() - dias);
+    
+    const result = await db.all(
+      `SELECT 
+        evento,
+        equipo_jugador,
+        fecha_evento,
+        odds
+       FROM predicciones
+       WHERE fecha_creacion >= ?
+       AND estado != 'cancelado'
+       ORDER BY fecha_creacion DESC`,
+      [fechaLimite.toISOString()]
+    );
+    
+    return result || [];
+  } catch (error) {
+    console.error('❌ Error obteniendo eventos recientes:', error);
+    return [];
+  }
+}
+
 export async function getDB() {
   if (!db) {
     await inicializarDB();
@@ -248,5 +273,6 @@ export default {
   obtenerPredicciones,
   calcularEstadísticas,
   obtenerEstadísticasSemanales,
+  obtenerEventosRecientes,
   getDB
 };
