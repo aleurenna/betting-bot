@@ -1,6 +1,6 @@
 /**
- * Módulo de Telegram
- * Envía recomendaciones de apuestas
+ * Módulo de Telegram v2
+ * Cada apuesta = 1 mensaje individual
  */
 
 import axios from 'axios';
@@ -13,299 +13,232 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const API_URL = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 
+const PAUSA_MS = 300; // pausa entre mensajes (anti rate-limit)
+
+// ─────────────────────────────────────────────
+// ENVIAR A TELEGRAM
+// ─────────────────────────────────────────────
+
+async function enviarMensaje(texto, html = true) {
+  const payload = { chat_id: TELEGRAM_CHAT_ID, text: texto };
+  if (html) payload.parse_mode = 'HTML';
+  
+  try {
+    await axios.post(`${API_URL}/sendMessage`, payload);
+    return true;
+  } catch (error) {
+    // Si falla HTML, reintentar sin formato
+    if (html) {
+      try {
+        await axios.post(`${API_URL}/sendMessage`, {
+          chat_id: TELEGRAM_CHAT_ID,
+          text: texto.replace(/<[^>]*>/g, '')
+        });
+        return true;
+      } catch (e2) { /* silenciar */ }
+    }
+    console.error('❌ Error enviando mensaje:', error.message);
+    return false;
+  }
+}
+
+async function pausa() {
+  return new Promise(r => setTimeout(r, PAUSA_MS));
+}
+
 /**
- * Envía recomendaciones a Telegram
+ * Envía recomendaciones: 1 header + 1 msg por apuesta + 1 resumen
  */
 export async function enviarTelegram(recomendaciones, bankroll = 20, moneda = 'USD') {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-    console.warn('⚠️ Telegram no configurado. Saltando envío...');
+    console.warn('⚠️ Telegram no configurado');
     return;
   }
 
+  // Caso error
+  if (recomendaciones[0]?.error) {
+    await enviarMensaje(`🚨 ${recomendaciones[0].mensaje}`);
+    return;
+  }
+
+  if (!Array.isArray(recomendaciones) || recomendaciones.length === 0) {
+    await enviarMensaje('⚠️ Sin apuestas EV+ disponibles');
+    return;
+  }
+
+  const simbolo = moneda === 'CRC' ? '₡' : '$';
+  const fecha = new Date().toLocaleString('es-CR');
+  let enviados = 0;
+  let totalApostar = 0;
+
   try {
-    const mensaje = formatearMensaje(recomendaciones, bankroll, moneda);
+    // ── HEADER ──
+    let header = `<b>📊 APUESTAS EV+ — ${fecha}</b>\n`;
+    header += `💰 Bankroll: ${simbolo}${bankroll.toFixed(2)} ${moneda}\n`;
+    header += `🎯 ${recomendaciones.length} oportunidades encontradas`;
     
-    // Telegram límite: 4096 chars. Dividir si es necesario.
-    const chunks = splitMensaje(mensaje, 4000);
-    
-    for (const chunk of chunks) {
-      await axios.post(`${API_URL}/sendMessage`, {
-        chat_id: TELEGRAM_CHAT_ID,
-        text: chunk,
-        parse_mode: 'HTML'
-      });
-      // Pequeña pausa entre mensajes para evitar rate limit
-      if (chunks.length > 1) await new Promise(r => setTimeout(r, 500));
+    await enviarMensaje(header);
+    await pausa();
+
+    // ── CADA APUESTA = 1 MENSAJE ──
+    for (let i = 0; i < recomendaciones.length; i++) {
+      const ap = recomendaciones[i];
+      totalApostar += parseFloat(ap.apuesta || 0);
+      
+      const msg = formatearApuestaIndividual(ap, i + 1, simbolo, moneda);
+      const ok = await enviarMensaje(msg);
+      if (ok) enviados++;
+      await pausa();
     }
+
+    // ── RESUMEN FINAL ──
+    let resumen = `<b>📋 RESUMEN</b>\n`;
+    resumen += `💳 Total a apostar: ${simbolo}${totalApostar.toFixed(2)}\n`;
+    resumen += `📊 % bankroll: ${((totalApostar / bankroll) * 100).toFixed(1)}%\n`;
+    resumen += `📈 Apuestas: ${recomendaciones.length} | Kelly 25%\n`;
+    resumen += `\n⚠️ Apuesta responsablemente`;
+
+    await enviarMensaje(resumen);
 
     await db.registrarUsoCréditos(0, 'telegram', 'all', 'all', true);
-    console.log(`✅ Mensaje enviado a Telegram (${chunks.length} parte${chunks.length > 1 ? 's' : ''})`);
-    return true;
+    console.log(`✅ Telegram: ${enviados}/${recomendaciones.length} apuestas enviadas`);
 
   } catch (error) {
-    console.error('❌ Error enviando Telegram:', error.message);
-    
-    // Si falla HTML, intentar sin parse_mode
-    try {
-      const mensajePlano = formatearMensaje(recomendaciones, bankroll, moneda)
-        .replace(/<[^>]*>/g, '');
-      const chunks = splitMensaje(mensajePlano, 4000);
-      for (const chunk of chunks) {
-        await axios.post(`${API_URL}/sendMessage`, {
-          chat_id: TELEGRAM_CHAT_ID,
-          text: chunk
-        });
-      }
-      console.log('✅ Mensaje enviado (texto plano fallback)');
-    } catch (e2) {
-      console.error('❌ Fallback también falló:', e2.message);
-    }
-    
+    console.error('❌ Error en envío Telegram:', error.message);
     await db.registrarUsoCréditos(0, 'telegram', 'error', 'error', false);
   }
 }
 
-/**
- * Formatea las recomendaciones para Telegram
- */
-function formatearMensaje(recomendaciones, bankroll = 20, moneda = 'USD') {
-  if (!Array.isArray(recomendaciones) || recomendaciones.length === 0) {
-    return '⚠️ Sin apuestas con EV+ en este momento';
-  }
+// ─────────────────────────────────────────────
+// FORMATO INDIVIDUAL POR APUESTA
+// ─────────────────────────────────────────────
 
-  if (recomendaciones[0]?.error) {
-    return `🚨 Error: ${recomendaciones[0].mensaje}`;
-  }
-
-  const simbolo = moneda === 'CRC' ? '₡' : '$';
-  const fecha = new Date().toLocaleString('es-ES');
-  let mensaje = `<b>📊 RECOMENDACIONES DE APUESTAS</b>\n`;
-  mensaje += `⏰ ${fecha}\n`;
-  mensaje += `💰 Bankroll: ${simbolo}${bankroll.toFixed(2)} ${moneda}\n`;
-  mensaje += `📈 Plan: EV+ Strategy con Kelly Criterion\n`;
-  mensaje += `\n${'='.repeat(50)}\n\n`;
-
-  let totalApostar = 0;
-
-  recomendaciones.forEach((apuesta, index) => {
-    const emoji = obtenerEmoji(apuesta.deporte);
-    const reasonScore = parseInt(apuesta.score);
-    const confidencia = reasonScore > 75 ? '🔥 ALTA' : reasonScore > 60 ? '⚡ MEDIA' : '⚠️ BAJA';
-    
-    // Colores de riesgo
-    let nivelRiesgo = '🟢 Bajo';
-    if (apuesta.riesgoNivel === 'medio') nivelRiesgo = '🟡 Medio';
-    if (apuesta.riesgoNivel === 'alto') nivelRiesgo = '🟠 Alto';
-    if (apuesta.riesgoNivel === 'muy_alto') nivelRiesgo = '🔴 Muy Alto';
-
-    totalApostar += parseFloat(apuesta.apuesta || 0);
-
-    mensaje += `<b>${index + 1}. ${emoji} ${apuesta.liga}</b>\n`;
-    mensaje += `🎯 <b>${apuesta.equipo}</b>\n`;
-    mensaje += `🏟️ ${apuesta.evento}\n`;
-    mensaje += `💰 Odds: <code>${parseFloat(apuesta.odds).toFixed(2)}</code> (${apuesta.mejorBookmaker || 'mejor disponible'})\n`;
-    mensaje += `📊 Prob: <code>${apuesta.probabilidad}%</code> | EV: <code>+${apuesta.ev}%</code> | Kelly: <code>${apuesta.kelly}%</code>\n`;
-    
-    // Fuente de probabilidad (Pinnacle vs mediana)
-    const fuente = apuesta.fuenteProbabilidad || 'promedio';
-    if (fuente.startsWith('sharp')) {
-      mensaje += `🎯 <b>Ref: Pinnacle</b> (prob. real ajustada)\n`;
-    }
-    
-    // DISPONIBILIDAD EN CASAS PRINCIPALES
-    if (apuesta.disponibleEnPrincipales) {
-      const casasNombres = apuesta.casasPrincipales.map(c => c.nombre).join(' + ');
-      mensaje += `✅ Disponible en: ${casasNombres}\n`;
-    } else {
-      mensaje += `⚠️ No en Doradobet/Bet365 (${apuesta.consensoCasas} alternativas)\n`;
-    }
-    
-    // APUESTA RECOMENDADA
-    mensaje += `\n💵 <b>APUESTA RECOMENDADA:</b>\n`;
-    mensaje += `   → ${simbolo}<code>${apuesta.apuesta.toFixed(2)}</code> ${moneda} ${nivelRiesgo}\n`;
-    mensaje += `   → Si ganas: ${simbolo}${parseFloat(apuesta.gananciaSiGana).toFixed(2)}\n`;
-    mensaje += `   → Si pierdes: -${simbolo}${Math.abs(parseFloat(apuesta.pérdidaSiPierde)).toFixed(2)}\n`;
-    
-    mensaje += `\n🎲 Consenso: ${apuesta.consensoCasas} casas | Diferencial: <code>+${apuesta.diferencialOdds}%</code>\n`;
-    mensaje += `💪 Confianza: ${confidencia} (Score: ${apuesta.score})\n`;
-    
-    // Explicación
-    mensaje += `\n✅ <b>Por qué apostar:</b>\n`;
-    mensaje += generarExplicacion(apuesta);
-    
-    mensaje += `\n${'─'.repeat(50)}\n\n`;
-  });
-
-  mensaje += `\n<b>📋 RESUMEN:</b>\n`;
-  mensaje += `💳 Total a apostar: ${simbolo}${totalApostar.toFixed(2)} ${moneda}\n`;
-  mensaje += `📊 Bankroll disponible: ${simbolo}${bankroll.toFixed(2)} ${moneda}\n`;
-  mensaje += `📈 % de bankroll: ${((totalApostar / bankroll) * 100).toFixed(1)}%\n`;
-
-  mensaje += `\n<b>💡 TIPS IMPORTANTES:</b>\n`;
-  mensaje += `• Las cantidades respetan Kelly Criterion 25% (conservador)\n`;
-  mensaje += `• Solo apostar el dinero que puedas perder\n`;
-  mensaje += `• Diversificar entre múltiples eventos reduce riesgo\n`;
-  mensaje += `• Registrar TODOS los resultados para análisis\n`;
-  mensaje += `\n<b>📉 Recuerda:</b> Las apuestas conllevan riesgo. Apuesta responsablemente.`;
-
-  return mensaje;
-}
-
-/**
- * Genera explicación de por qué apostar
- */
-function generarExplicacion(apuesta) {
-  let explicacion = '';
+function formatearApuestaIndividual(ap, numero, simbolo, moneda) {
+  const emoji = obtenerEmoji(ap.deporte);
+  const score = parseInt(ap.score);
+  const confianza = score > 75 ? '🔥 ALTA' : score > 60 ? '⚡ MEDIA' : '⚠️ BAJA';
   
-  // Fuente de probabilidad
-  const fuente = apuesta.fuenteProbabilidad || 'promedio';
+  let riesgo = '🟢 Bajo';
+  if (ap.riesgoNivel === 'medio') riesgo = '🟡 Medio';
+  if (ap.riesgoNivel === 'alto') riesgo = '🟠 Alto';
+  if (ap.riesgoNivel === 'muy_alto') riesgo = '🔴 Muy Alto';
+
+  const fechaEvento = ap.fechaEvento 
+    ? new Date(ap.fechaEvento).toLocaleString('es-CR', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : '';
+
+  let msg = '';
+
+  // Encabezado
+  msg += `<b>${numero}. ${emoji} ${ap.liga}</b>\n`;
+  msg += `🎯 <b>${ap.equipo}</b>\n`;
+  msg += `🏟️ ${ap.evento}\n`;
+  if (fechaEvento) msg += `🕐 ${fechaEvento}\n`;
+  msg += `\n`;
+
+  // Odds y análisis
+  msg += `💰 Odds: <code>${parseFloat(ap.odds).toFixed(2)}</code>`;
+  if (ap.mejorBookmaker) msg += ` (${ap.mejorBookmaker})`;
+  msg += `\n`;
+  
+  msg += `📊 Prob: <code>${ap.probabilidad}%</code> | EV: <code>+${ap.ev}%</code>\n`;
+  
+  // Pinnacle
+  const fuente = ap.fuenteProbabilidad || '';
   if (fuente.startsWith('sharp')) {
-    explicacion += `• <b>Pinnacle confirma:</b> Línea sharp respalda esta apuesta\n`;
-  }
-  
-  // EV
-  const ev = parseFloat(apuesta.ev);
-  if (ev > 5) explicacion += `• <b>EV Excelente:</b> +${ev}% edge muy fuerte\n`;
-  else if (ev > 3) explicacion += `• <b>EV Muy Bueno:</b> +${ev}% valor real\n`;
-  else explicacion += `• <b>EV Positivo:</b> +${ev}% a favor\n`;
-  
-  // Probabilidad
-  const prob = parseFloat(apuesta.probabilidad);
-  if (prob > 65) explicacion += `• <b>Favorito Claro:</b> ${prob}% probabilidad\n`;
-  else if (prob > 55) explicacion += `• <b>Ligero Favorito:</b> ${prob}% sólido\n`;
-  
-  // Consenso
-  if (parseInt(apuesta.consensoCasas) >= 6) {
-    explicacion += `• <b>Gran Consenso:</b> ${apuesta.consensoCasas} casas con línea similar\n`;
-  }
-  
-  // Diferencial
-  if (parseFloat(apuesta.diferencialOdds) > 5) {
-    explicacion += `• <b>Odds Premium:</b> +${apuesta.diferencialOdds}% mejor que mercado\n`;
-  }
-  
-  // Mejor bookmaker
-  if (apuesta.mejorBookmaker) {
-    explicacion += `• <b>Apostar en:</b> ${apuesta.mejorBookmaker}\n`;
+    msg += `🎯 Ref: Pinnacle (prob. ajustada)\n`;
   }
 
-  return explicacion;
+  // Casas disponibles
+  if (ap.disponibleEnPrincipales) {
+    const casas = ap.casasPrincipales.map(c => c.nombre).join(' + ');
+    msg += `✅ ${casas}\n`;
+  } else {
+    msg += `⚠️ No en Doradobet/Bet365 (${ap.consensoCasas} alternativas)\n`;
+  }
+  
+  msg += `\n`;
+
+  // Apuesta recomendada (la parte más importante)
+  msg += `💵 <b>Apostar: ${simbolo}${ap.apuesta.toFixed(2)} ${moneda}</b> ${riesgo}\n`;
+  msg += `   ✅ Ganas: +${simbolo}${parseFloat(ap.gananciaSiGana).toFixed(2)}\n`;
+  msg += `   ❌ Pierdes: -${simbolo}${Math.abs(parseFloat(ap.pérdidaSiPierde)).toFixed(2)}\n`;
+  msg += `\n`;
+
+  // Confianza y razones
+  msg += `💪 ${confianza} (Score: ${ap.score}/100)\n`;
+  msg += generarExplicacion(ap);
+
+  return msg;
 }
 
-/**
- * Obtiene emoji por deporte
- */
+// ─────────────────────────────────────────────
+// EXPLICACIÓN
+// ─────────────────────────────────────────────
+
+function generarExplicacion(ap) {
+  const razones = [];
+  
+  const fuente = ap.fuenteProbabilidad || '';
+  if (fuente.startsWith('sharp')) razones.push('Pinnacle confirma línea');
+  
+  const ev = parseFloat(ap.ev);
+  if (ev > 5) razones.push(`EV excelente +${ev}%`);
+  else if (ev > 3) razones.push(`EV muy bueno +${ev}%`);
+  
+  if (parseInt(ap.consensoCasas) >= 6) razones.push(`${ap.consensoCasas} casas coinciden`);
+  if (parseFloat(ap.diferencialOdds) > 5) razones.push(`+${ap.diferencialOdds}% mejor que mercado`);
+  
+  if (razones.length === 0) return '';
+  return razones.map(r => `  • ${r}`).join('\n') + '\n';
+}
+
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
+
 function obtenerEmoji(deporte) {
   if (!deporte) return '🎯';
   if (deporte.includes('soccer')) return '⚽';
   if (deporte.includes('basketball')) return '🏀';
   if (deporte.includes('tennis')) return '🎾';
+  if (deporte.includes('baseball')) return '⚾';
   return '🎯';
 }
 
-/**
- * Envía reporte diario
- */
+// ─────────────────────────────────────────────
+// REPORTE SEMANAL
+// ─────────────────────────────────────────────
+
 export async function enviarReporteDiario() {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-    console.warn('⚠️ Telegram no configurado para reporte');
-    return;
-  }
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
 
   try {
     const stats = await db.obtenerEstadísticasSemanales();
+    if (stats.length === 0) return;
     
-    if (stats.length === 0) {
-      console.log('Sin estadísticas para reporte');
-      return;
-    }
+    let msg = `<b>📈 REPORTE SEMANAL</b>\n\n`;
     
-    let mensaje = `<b>📈 REPORTE SEMANAL DE APUESTAS</b>\n\n`;
-    
-    let totalGanancia = 0;
-    let totalPredicciones = 0;
-    let totalGanadas = 0;
+    let totalGanancia = 0, totalPred = 0, totalGanadas = 0;
     
     stats.forEach(day => {
-      const winRate = ((day.predicciones_ganadas / day.total_predicciones) * 100).toFixed(1);
-      mensaje += `<b>${day.fecha}</b>\n`;
-      mensaje += `├ Predicciones: ${day.total_predicciones} (${winRate}% ganadas)\n`;
-      mensaje += `├ ROI: ${day.roi_diario > 0 ? '+' : ''}${day.roi_diario.toFixed(2)}%\n`;
-      mensaje += `├ EV Promedio: ${day.ev_promedio.toFixed(2)}%\n`;
-      mensaje += `└ Créditos: ${day.creditos_usados}\n\n`;
-      
+      const wr = ((day.predicciones_ganadas / day.total_predicciones) * 100).toFixed(1);
+      msg += `<b>${day.fecha}</b> — ${day.total_predicciones} pred (${wr}% win)\n`;
       totalGanancia += day.ganancia_neta || 0;
-      totalPredicciones += day.total_predicciones;
+      totalPred += day.total_predicciones;
       totalGanadas += day.predicciones_ganadas;
     });
     
-    const winRateSemanal = totalPredicciones > 0 
-      ? ((totalGanadas / totalPredicciones) * 100).toFixed(1) 
-      : '0.0';
-    mensaje += `\n<b>TOTALES SEMANA:</b>\n`;
-    mensaje += `🏆 Win Rate: ${winRateSemanal}%\n`;
-    mensaje += `💰 Ganancia Neta: ${totalGanancia > 0 ? '+' : ''}${totalGanancia.toFixed(2)}\n`;
-    mensaje += `\n✅ Recuerda: Consistencia > Ganancias rápidas`;
+    const wrTotal = totalPred > 0 ? ((totalGanadas / totalPred) * 100).toFixed(1) : '0.0';
+    msg += `\n🏆 Win Rate: ${wrTotal}%`;
+    msg += `\n💰 Ganancia: ${totalGanancia > 0 ? '+' : ''}${totalGanancia.toFixed(2)}`;
     
-    // Enviar directamente sin pasar por formatearMensaje
-    await axios.post(`${API_URL}/sendMessage`, {
-      chat_id: TELEGRAM_CHAT_ID,
-      text: mensaje,
-      parse_mode: 'HTML'
-    });
-    
-    console.log('✅ Reporte semanal enviado a Telegram');
+    await enviarMensaje(msg);
+    console.log('✅ Reporte semanal enviado');
     
   } catch (error) {
-    console.error('❌ Error enviando reporte:', error.message);
+    console.error('❌ Error reporte:', error.message);
   }
 }
 
-/**
- * Divide mensaje largo en chunks respetando separadores
- */
-function splitMensaje(texto, maxLen = 4000) {
-  if (texto.length <= maxLen) return [texto];
-  
-  const chunks = [];
-  const separador = '─'.repeat(50);
-  const partes = texto.split(separador);
-  
-  let chunk = '';
-  for (const parte of partes) {
-    if ((chunk + separador + parte).length > maxLen && chunk.length > 0) {
-      chunks.push(chunk.trim());
-      chunk = parte;
-    } else {
-      chunk += (chunk ? separador : '') + parte;
-    }
-  }
-  if (chunk.trim()) chunks.push(chunk.trim());
-  
-  // Si algún chunk sigue siendo muy largo, cortar por líneas
-  const resultado = [];
-  for (const c of chunks) {
-    if (c.length <= maxLen) {
-      resultado.push(c);
-    } else {
-      let sub = '';
-      for (const linea of c.split('\n')) {
-        if ((sub + '\n' + linea).length > maxLen) {
-          resultado.push(sub.trim());
-          sub = linea;
-        } else {
-          sub += (sub ? '\n' : '') + linea;
-        }
-      }
-      if (sub.trim()) resultado.push(sub.trim());
-    }
-  }
-  
-  return resultado;
-}
-
-export default {
-  enviarTelegram,
-  enviarReporteDiario,
-  formatearMensaje
-};
+export default { enviarTelegram, enviarReporteDiario };
