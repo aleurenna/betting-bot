@@ -14,21 +14,70 @@ dotenv.config();
 
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 
-// Deportes - LEE DEL .env (default: 4 deportes principales)
-const DEFAULT_SPORTS = 'soccer_epl,soccer_la_liga,basketball_nba,tennis_atp';
-const SPORTS = (process.env.SPORTS || DEFAULT_SPORTS).split(',').map(s => s.trim()).filter(Boolean);
+// Deportes preferidos (se filtran contra los activos en la API)
+const PREFERRED_SPORTS = [
+  // Fútbol
+  'soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a',
+  'soccer_germany_bundesliga', 'soccer_france_ligue_one',
+  'soccer_uefa_champs_league', 'soccer_uefa_europa_league',
+  'soccer_usa_mls', 'soccer_mexico_ligamx', 'soccer_brazil_campeonato',
+  // Basketball
+  'basketball_nba', 'basketball_euroleague',
+  // Tennis (torneos específicos - se detectan automáticamente)
+  'tennis_atp_aus_open_singles', 'tennis_atp_french_open',
+  'tennis_atp_wimbledon', 'tennis_atp_us_open',
+  'tennis_atp_indian_wells', 'tennis_atp_miami_open',
+  'tennis_atp_monte_carlo_masters', 'tennis_atp_madrid_open',
+  'tennis_atp_italian_open', 'tennis_atp_cincinnati_open',
+  'tennis_atp_shanghai_masters', 'tennis_atp_canadian_open',
+  'tennis_wta_french_open', 'tennis_wta_wimbledon', 'tennis_wta_us_open',
+  'tennis_wta_madrid_open', 'tennis_wta_italian_open',
+  // MLB (en temporada)
+  'baseball_mlb'
+];
 
-// Regiones - LEE DEL .env (default: eu,us - 2 regiones para ahorrar créditos)
+// Regiones
 const DEFAULT_REGIONS = 'eu,us';
 const REGIONS = (process.env.REGIONS || DEFAULT_REGIONS).split(',').map(s => s.trim()).filter(Boolean);
 
-// Info de créditos estimados por ejecución
-const CREDITOS_POR_EJECUCION = SPORTS.length * REGIONS.length;
-console.log(`📋 Config: ${SPORTS.length} deportes × ${REGIONS.length} regiones = ~${CREDITOS_POR_EJECUCION} créditos/ejecución`);
-
 const MARKETS = ['h2h'];
+let creditosRestantes = 500;
 
-let creditosRestantes = 500; // Simulado - obtener del header real
+/**
+ * Obtiene deportes activos desde la API (GRATIS, no consume créditos)
+ */
+async function obtenerDeportesActivos() {
+  try {
+    const url = 'https://api.the-odds-api.com/v4/sports';
+    const response = await axios.get(url, {
+      params: { apiKey: ODDS_API_KEY },
+      timeout: 10000
+    });
+
+    const activos = response.data
+      .filter(s => s.active && !s.has_outrights)
+      .map(s => s.key);
+
+    // Filtrar solo los preferidos que están activos
+    const deportesAUsar = PREFERRED_SPORTS.filter(s => activos.includes(s));
+
+    // Si hay env override, usarlo pero validar contra activos
+    if (process.env.SPORTS) {
+      const envSports = process.env.SPORTS.split(',').map(s => s.trim());
+      const envActivos = envSports.filter(s => activos.includes(s));
+      if (envActivos.length > 0) return envActivos;
+    }
+
+    console.log(`🌐 Deportes activos encontrados: ${deportesAUsar.length}/${activos.length} total`);
+    console.log(`   → ${deportesAUsar.join(', ')}`);
+    return deportesAUsar;
+
+  } catch (error) {
+    console.error('⚠️ Error obteniendo deportes activos:', error.message);
+    // Fallback a deportes seguros
+    return ['soccer_epl', 'soccer_spain_la_liga', 'basketball_nba'];
+  }
+}
 
 /**
  * Función principal - Ejecuta análisis de apuestas
@@ -47,7 +96,18 @@ export async function ejecutarBot() {
     
     console.log(`💰 Bankroll: ${simboloMoneda}${bankroll.toFixed(2)} ${moneda}`);
     
-    // Obtener eventos ya recomendados en los últimos 3 días para evitar duplicados
+    // Obtener deportes activos (GRATIS)
+    const SPORTS = await obtenerDeportesActivos();
+    
+    if (SPORTS.length === 0) {
+      console.log('⚠️ No hay deportes activos en este momento');
+      return [];
+    }
+    
+    const creditosEstimados = SPORTS.length * REGIONS.length;
+    console.log(`📋 Config: ${SPORTS.length} deportes × ${REGIONS.length} regiones = ~${creditosEstimados} créditos`);
+    
+    // Obtener eventos ya recomendados para evitar duplicados
     const eventosRecientes = await db.obtenerEventosRecientes(3);
     console.log(`📋 Eventos recientes para evitar duplicados: ${eventosRecientes.length}`);
     
@@ -317,36 +377,29 @@ function analizarOutcome(data, recomendaciones, bankroll, moneda) {
  */
 function obtenerLiga(sport) {
   const ligas = {
-    // Fútbol Europeo Principal
     'soccer_epl': 'Premier League',
-    'soccer_la_liga': 'La Liga',
-    'soccer_serie_a': 'Serie A',
-    'soccer_bundesliga': 'Bundesliga',
-    'soccer_ligue_1': 'Ligue 1',
-    
-    // Competiciones Europeas
-    'soccer_champions_league': 'Champions League',
-    'soccer_europa_league': 'Europa League',
-    
-    // Ligas Americas
-    'soccer_mls': 'MLS',
-    'soccer_mexico_primera_division': 'Liga MX',
-    'soccer_brazil': 'Campeonato Brasileño',
-    
-    // Ligas Adicionales (Segundo Nivel)
-    'soccer_efl_championship': 'EFL Championship',
-    'soccer_argentina_primera': 'Liga Argentina',
+    'soccer_spain_la_liga': 'La Liga',
+    'soccer_italy_serie_a': 'Serie A',
+    'soccer_germany_bundesliga': 'Bundesliga',
+    'soccer_france_ligue_one': 'Ligue 1',
+    'soccer_uefa_champs_league': 'Champions League',
+    'soccer_uefa_europa_league': 'Europa League',
+    'soccer_usa_mls': 'MLS',
+    'soccer_mexico_ligamx': 'Liga MX',
+    'soccer_brazil_campeonato': 'Brasileirão',
+    'soccer_efl_champ': 'EFL Championship',
+    'soccer_argentina_primera_division': 'Liga Argentina',
     'soccer_portugal_primeira_liga': 'Primeira Liga',
     'soccer_netherlands_eredivisie': 'Eredivisie',
-    
-    // Basketball
     'basketball_nba': 'NBA',
     'basketball_euroleague': 'Euroleague',
-    
-    // Tennis
-    'tennis_atp': 'ATP',
-    'tennis_wta': 'WTA'
+    'baseball_mlb': 'MLB'
   };
+  // Para tennis, extraer nombre del torneo
+  if (sport.includes('tennis')) {
+    return sport.replace('tennis_atp_', 'ATP ').replace('tennis_wta_', 'WTA ')
+      .replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }
   return ligas[sport] || sport;
 }
 
