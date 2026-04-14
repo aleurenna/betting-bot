@@ -2,34 +2,49 @@ name: Betting Bot - EV+ Analysis
 
 on:
   schedule:
-    - cron: '*/30 8-23 * * 1-5'
-    - cron: '*/30 10-22 * * 0,6'
+    # 2 ejecuciones diarias (ahorra créditos: 8 créditos × 2 = 16/día × 30 = 480/500)
+    # 10am Costa Rica (16:00 UTC)
+    - cron: '0 16 * * *'
+    # 4pm Costa Rica (22:00 UTC)
+    - cron: '0 22 * * *'
+  
+  # Ejecución manual desde GitHub
   workflow_dispatch:
 
 jobs:
-  betting-analysis:
+  analyze:
     runs-on: ubuntu-latest
-    
-    strategy:
-      matrix:
-        node-version: [18.x]
+    timeout-minutes: 10
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-    
-    - name: Setup Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v3
-      with:
-        node-version: ${{ matrix.node-version }}
-    
-    - name: Install dependencies
-      run: npm install
-    
-    - name: Run betting bot
-      env:
-        ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: node index.js
-      continue-on-error: true
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run analysis
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BANKROLL_INICIAL: ${{ secrets.BANKROLL_INICIAL }}
+          MONEDA: ${{ secrets.MONEDA }}
+          SPORTS: 'soccer_epl,soccer_la_liga,basketball_nba,tennis_atp'
+          REGIONS: 'eu,us'
+          NODE_ENV: 'production'
+        run: node index.js --once
+
+      - name: Upload DB artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bets-db-${{ github.run_number }}
+          path: bets.db
+          retention-days: 30
