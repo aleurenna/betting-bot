@@ -14,46 +14,17 @@ dotenv.config();
 
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 
-// Deportes disponibles según The Odds API - EXPANDIDOS
-const SPORTS = [
-// ⚽ LIGAS PRINCIPALES EUROPEAS
-  'soccer_epl',        // Premier League (Inglaterra)
-  'soccer_la_liga',    // La Liga (España)
-  'soccer_serie_a',    // Serie A (Italia)
-  'soccer_bundesliga', // Bundesliga (Alemania)
-  'soccer_ligue_1',    // Ligue 1 (Francia)
-  
-  // 🏆 COMPETICIONES EUROPEAS
-  'soccer_champions_league',  // UEFA Champions League
-  'soccer_europa_league',     // UEFA Europa League
-  
-  // 🌎 LIGAS AMERICAS
-  'soccer_mls',                    // Major League Soccer (USA)
-  'soccer_mexico_primera_division', // Liga MX (México)
-  'soccer_brazil',                 // Campeonato Brasileño
-  
-  // 🆕 LIGAS ADICIONALES (Segundo Nivel)
-  'soccer_efl_championship',        // Segunda División Inglesa
-  'soccer_argentina_primera',       // Liga Argentina
-  'soccer_portugal_primeira_liga',  // Primeira Liga (Portugal)
-  'soccer_netherlands_eredivisie',  // Eredivisie (Holanda)
-  
-  // 🏀 BASKETBALL
-  'basketball_nba',
-  'basketball_euroleague',
-  
-  // 🎾 TENNIS
-  'tennis_atp',
-  'tennis_wta'
-];
+// Deportes - LEE DEL .env (default: 4 deportes principales)
+const DEFAULT_SPORTS = 'soccer_epl,soccer_la_liga,basketball_nba,tennis_atp';
+const SPORTS = (process.env.SPORTS || DEFAULT_SPORTS).split(',').map(s => s.trim()).filter(Boolean);
 
-// Regiones disponibles según The Odds API - TODAS LAS OPCIONES
-const REGIONS = [
-  'us',  // United States (DraftKings, FanDuel, Bet365, BetMGM)
-  'uk',  // United Kingdom (Sky Bet, Ladbrokes, William Hill, Betfred)
-  'eu',  // Europa (Betfair, Unibet, Bwin, 888sport, Pinnacle)
-  'au'   // Australia (Sportsbet, TAB, Neds, Ladbrokes)
-];
+// Regiones - LEE DEL .env (default: eu,us - 2 regiones para ahorrar créditos)
+const DEFAULT_REGIONS = 'eu,us';
+const REGIONS = (process.env.REGIONS || DEFAULT_REGIONS).split(',').map(s => s.trim()).filter(Boolean);
+
+// Info de créditos estimados por ejecución
+const CREDITOS_POR_EJECUCION = SPORTS.length * REGIONS.length;
+console.log(`📋 Config: ${SPORTS.length} deportes × ${REGIONS.length} regiones = ~${CREDITOS_POR_EJECUCION} créditos/ejecución`);
 
 const MARKETS = ['h2h'];
 
@@ -113,8 +84,6 @@ export async function ejecutarBot() {
       .filter(r => r.ev > 0.02 && r.score > 50)
       .sort((a, b) => b.score - a.score)
       .slice(0, 10); // Top 10
-    
-    console.log(`✅ Nuevas apuestas encontradas (sin repetidos): ${buenasApuestas.length}`);
     
     console.log(`✅ Nuevas apuestas encontradas (sin repetidos): ${buenasApuestas.length}`);
     

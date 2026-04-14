@@ -186,22 +186,22 @@ function generarExplicacion(apuesta) {
  * Obtiene emoji por deporte
  */
 function obtenerEmoji(deporte) {
-  const emojis = {
-    'soccer_epl': '⚽',
-    'soccer_la_liga': '⚽',
-    'soccer_serie_a': '⚽',
-    'basketball_nba': '🏀',
-    'basketball_euroleague': '🏀',
-    'tennis_atp': '🎾',
-    'tennis_wta': '🎾'
-  };
-  return emojis[deporte] || '🎯';
+  if (!deporte) return '🎯';
+  if (deporte.includes('soccer')) return '⚽';
+  if (deporte.includes('basketball')) return '🏀';
+  if (deporte.includes('tennis')) return '🎾';
+  return '🎯';
 }
 
 /**
  * Envía reporte diario
  */
 export async function enviarReporteDiario() {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+    console.warn('⚠️ Telegram no configurado para reporte');
+    return;
+  }
+
   try {
     const stats = await db.obtenerEstadísticasSemanales();
     
@@ -229,19 +229,25 @@ export async function enviarReporteDiario() {
       totalGanadas += day.predicciones_ganadas;
     });
     
-    const winRateSemanal = ((totalGanadas / totalPredicciones) * 100).toFixed(1);
+    const winRateSemanal = totalPredicciones > 0 
+      ? ((totalGanadas / totalPredicciones) * 100).toFixed(1) 
+      : '0.0';
     mensaje += `\n<b>TOTALES SEMANA:</b>\n`;
     mensaje += `🏆 Win Rate: ${winRateSemanal}%\n`;
     mensaje += `💰 Ganancia Neta: ${totalGanancia > 0 ? '+' : ''}${totalGanancia.toFixed(2)}\n`;
     mensaje += `\n✅ Recuerda: Consistencia > Ganancias rápidas`;
     
-    await enviarTelegram([{ 
-      error: false, 
-      mensaje: mensaje 
-    }]);
+    // Enviar directamente sin pasar por formatearMensaje
+    await axios.post(`${API_URL}/sendMessage`, {
+      chat_id: TELEGRAM_CHAT_ID,
+      text: mensaje,
+      parse_mode: 'HTML'
+    });
+    
+    console.log('✅ Reporte semanal enviado a Telegram');
     
   } catch (error) {
-    console.error('❌ Error enviando reporte:', error);
+    console.error('❌ Error enviando reporte:', error.message);
   }
 }
 

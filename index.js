@@ -2,7 +2,7 @@
 
 /**
  * BETTING BOT - Main Entry Point
- * Orquesta todas las funciones del bot
+ * Modo --once para GitHub Actions, modo daemon para local
  */
 
 import * as botMain from './bot.js';
@@ -14,222 +14,139 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
-const EXEC_INTERVAL = parseInt(process.env.EXEC_INTERVAL || '30'); // minutos
-
-let isRunning = false;
+const EXEC_INTERVAL = parseInt(process.env.EXEC_INTERVAL || '30');
+const IS_ONCE = process.argv.includes('--once');
 
 /**
  * Ejecución única de análisis
  */
 async function executeAnalysis() {
-  if (isRunning) {
-    console.log('⏳ Análisis anterior aún en progreso, saltando...');
-    return;
-  }
-
-  isRunning = true;
-
   try {
-    console.log('\n' + '='.repeat(70));
-    console.log('🤖 BETTING BOT INICIANDO ANÁLISIS');
-    console.log('='.repeat(70));
-    console.log(`📍 Entorno: ${NODE_ENV.toUpperCase()}`);
-    console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
-    console.log('='.repeat(70) + '\n');
+    console.log('\n' + '='.repeat(60));
+    console.log('🤖 BETTING BOT - ANÁLISIS');
+    console.log(`⏰ ${new Date().toISOString()}`);
+    console.log(`📍 Modo: ${IS_ONCE ? 'ONCE (GitHub Actions)' : 'DAEMON (local)'}`);
+    console.log('='.repeat(60) + '\n');
 
-    // Ejecutar análisis principal
     const recomendaciones = await botMain.ejecutarBot();
 
     if (recomendaciones && recomendaciones.length > 0) {
-      console.log(`\n✅ Análisis completado: ${recomendaciones.length} oportunidades encontradas`);
-
-      // En modo development, mostrar detalles
+      console.log(`\n✅ ${recomendaciones.length} oportunidades encontradas`);
       if (NODE_ENV === 'development') {
-        console.log('\n📋 RECOMENDACIONES DETALLADAS:');
         console.log(JSON.stringify(recomendaciones, null, 2));
       }
     } else {
-      console.log('\n⚠️  Sin oportunidades con EV+ en este momento');
+      console.log('\n⚠️  Sin oportunidades EV+ en este momento');
+      
+      // Notificar que se ejecutó pero no encontró nada
+      if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) {
+        try {
+          const axios = (await import('axios')).default;
+          const API_URL = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
+          await axios.post(`${API_URL}/sendMessage`, {
+            chat_id: process.env.TELEGRAM_CHAT_ID,
+            text: `⚠️ <b>Bot ejecutado</b> - ${new Date().toLocaleString('es-CR')}\nSin apuestas EV+ disponibles en este ciclo.`,
+            parse_mode: 'HTML'
+          });
+          console.log('📱 Notificación enviada a Telegram');
+        } catch (e) {
+          console.error('❌ Error notificando a Telegram:', e.message);
+        }
+      }
     }
 
-    // Mostrar créditos restantes
     const creditosUsados = await dbModule.obtenerTotalCréditos(1);
-    console.log(`\n💳 Créditos usados hoy: ${creditosUsados}/500`);
+    console.log(`\n💳 Créditos usados hoy: ~${creditosUsados}`);
 
   } catch (error) {
     console.error('\n❌ ERROR EN ANÁLISIS:', error);
-
-    // Notificar error a Telegram
+    
     try {
       await telegramModule.enviarTelegram([{
         error: true,
         mensaje: `🚨 Error en bot: ${error.message}`
       }]);
     } catch (telegramError) {
-      console.error('❌ No se pudo enviar error a Telegram:', telegramError.message);
+      console.error('❌ No se pudo notificar error:', telegramError.message);
     }
-
-  } finally {
-    isRunning = false;
-    console.log('\n✅ Análisis finalizado\n');
   }
-}
-
-/**
- * Genera reporte semanal
- */
-async function executeWeeklyReport() {
-  console.log('\n📊 Generando reporte semanal...');
-
-  try {
-    await telegramModule.enviarReporteDiario();
-    console.log('✅ Reporte semanal enviado');
-  } catch (error) {
-    console.error('❌ Error generando reporte:', error);
-  }
-}
-
-/**
- * Setup de scheduling
- */
-function setupSchedules() {
-  console.log('\n⏰ Configurando schedules...\n');
-
-  // Ejecución cada X minutos
-  const schedule = `*/${EXEC_INTERVAL} * * * *`;
-  console.log(`📅 Análisis: cada ${EXEC_INTERVAL} minutos`);
-  console.log(`   Horario: 8am-11pm Lun-Vie | 10am-10pm Sáb-Dom`);
-
-  const job = cron.schedule(schedule, async () => {
-    const now = new Date();
-    const hour = now.getHours();
-    const day = now.getDay(); // 0=Domingo, 1=Lunes, ... 6=Sábado
-
-    // Restricción de horario
-    const esEntreSemana = day >= 1 && day <= 5; // Lun-Vie
-    const esFinSemana = day === 0 || day === 6; // Sáb-Dom
-    const horaValida = (esEntreSemana && hour >= 8 && hour < 23) ||
-                       (esFinSemana && hour >= 10 && hour < 22);
-
-    if (horaValida) {
-      await executeAnalysis();
-    } else {
-      console.log(`⏸️  Fuera de horario de operación (${hour}:00 ${day})`);
-    }
-  }, {
-    runOnInit: true // Ejecutar inmediatamente al iniciar
-  });
-
-  // Reporte semanal (Lunes 9am)
-  const weeklyJob = cron.schedule('0 9 * * 1', async () => {
-    await executeWeeklyReport();
-  });
-
-  console.log('✅ Schedules configurados\n');
-
-  return { job, weeklyJob };
-}
-
-/**
- * Setup de señales de cierre limpio
- */
-function setupSignalHandlers() {
-  process.on('SIGINT', async () => {
-    console.log('\n\n🛑 Señal SIGINT recibida - Cerrando gracefully...');
-    process.exit(0);
-  });
-
-  process.on('SIGTERM', async () => {
-    console.log('\n\n🛑 Señal SIGTERM recibida - Cerrando gracefully...');
-    process.exit(0);
-  });
-
-  process.on('unhandledRejection', (reason, promise) => {
-    console.error('❌ Unhandled Rejection:', promise, 'Reason:', reason);
-    process.exit(1);
-  });
 }
 
 /**
  * Main
  */
 async function main() {
-  console.clear();
-
   console.log(`
-╔════════════════════════════════════════════════════════════════════╗
-║                  🤖 BETTING BOT - EV+ STRATEGY 🤖                 ║
-║                                                                    ║
-║         Expected Value Based Automated Betting Analysis           ║
-║                                                                    ║
-╚════════════════════════════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════╗
+║    🤖 BETTING BOT - EV+ STRATEGY v1.1        ║
+╚═══════════════════════════════════════════════╝
   `);
 
-  console.log(`
-📊 CONFIGURACIÓN:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  • Entorno: ${NODE_ENV.toUpperCase()}
-  • Deportes: Fútbol (EPL, La Liga) | Basketball (NBA) | Tennis (ATP)
-  • Regiones: Europa, Australia (+ ocasional US, UK)
-  • Estrategia: EV+ (Expected Value positivo)
-  • Kelly Criterion: 25% Fractional (conservador)
-  • Mínimo EV: 2%
-  • Mínimo Score: 50/100
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  `);
-
-  // Verificar configuración
-  const requiredEnvVars = [
-    'ODDS_API_KEY',
-    'TELEGRAM_BOT_TOKEN',
-    'TELEGRAM_CHAT_ID'
-  ];
-
-  const missing = requiredEnvVars.filter(v => !process.env[v]);
+  // Verificar variables requeridas
+  const required = ['ODDS_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
+  const missing = required.filter(v => !process.env[v]);
 
   if (missing.length > 0) {
-    console.error(`\n❌ VARIABLES DE ENTORNO FALTANTES:\n  ${missing.join('\n  ')}`);
-    console.error('\n📝 Crear archivo .env con estas variables\n');
+    console.error(`❌ VARIABLES FALTANTES: ${missing.join(', ')}`);
     process.exit(1);
   }
 
-  console.log('✅ Configuración validada\n');
+  console.log('✅ Configuración validada');
+  console.log(`💰 Bankroll: ${process.env.MONEDA === 'CRC' ? '₡' : '$'}${process.env.BANKROLL_INICIAL || '20'} ${process.env.MONEDA || 'USD'}`);
 
-  // Setup
-  setupSignalHandlers();
-  const { job, weeklyJob } = setupSchedules();
-
-  console.log(`
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🚀 BOT EN EJECUCIÓN - Presiona Ctrl+C para detener
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  `);
-
-  // Mantener proceso activo
-  process.on('SIGINT', () => {
-    console.log('\n\n🛑 Deteniendo bot...');
-    job.stop();
-    weeklyJob.stop();
-    process.exit(0);
-  });
-
-  // En caso de modo de prueba / desarrollo
-  if (process.argv.includes('--once')) {
-    console.log('🧪 Modo prueba: una sola ejecución\n');
+  // Modo --once: ejecutar una vez y salir (para GitHub Actions)
+  if (IS_ONCE) {
+    console.log('🔄 Modo: ejecución única\n');
     await executeAnalysis();
+    console.log('\n✅ Ejecución completada');
     process.exit(0);
   }
 
-  // Mantener el proceso en ejecución
-  await new Promise(resolve => {
-    // El proceso continúa indefinidamente
+  // Modo daemon: cron local
+  console.log(`🔄 Modo: daemon (cada ${EXEC_INTERVAL} min)\n`);
+
+  // Ejecutar inmediatamente
+  await executeAnalysis();
+
+  // Programar ejecuciones
+  const schedule = `*/${EXEC_INTERVAL} * * * *`;
+  cron.schedule(schedule, async () => {
+    const now = new Date();
+    const hour = now.getHours();
+    const day = now.getDay();
+
+    const esEntreSemana = day >= 1 && day <= 5;
+    const esFinSemana = day === 0 || day === 6;
+    const horaValida = (esEntreSemana && hour >= 8 && hour < 23) ||
+                       (esFinSemana && hour >= 10 && hour < 22);
+
+    if (horaValida) {
+      await executeAnalysis();
+    } else {
+      console.log(`⏸️ Fuera de horario (${hour}:00)`);
+    }
+  });
+
+  // Reporte semanal (Lunes 9am)
+  cron.schedule('0 9 * * 1', async () => {
+    await telegramModule.enviarReporteDiario();
+  });
+
+  console.log('🚀 Bot activo - Ctrl+C para detener');
+
+  process.on('SIGINT', () => {
+    console.log('\n🛑 Deteniendo...');
+    process.exit(0);
+  });
+  process.on('SIGTERM', () => {
+    console.log('\n🛑 SIGTERM');
+    process.exit(0);
   });
 }
 
-// Ejecutar
 main().catch(error => {
   console.error('❌ Error fatal:', error);
   process.exit(1);
 });
 
-export { executeAnalysis, executeWeeklyReport };
+export { executeAnalysis };
