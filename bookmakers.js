@@ -1,25 +1,86 @@
 /**
- * Módulo de gestión de Bookmakers
- * Prioriza Doradobet y Bet365
+ * Módulo de Bookmakers - Personalizado
+ * 
+ * Casas del usuario: 1xBet, Betfair, Betway, Bet365, Doradobet
+ * Casas disponibles en API: 1xBet, Betfair Exchange, Betway
  */
+
+// Mapeo de casas del usuario → keys en The Odds API
+export const MIS_CASAS = {
+  'onexbet':        { nombre: '1xBet',           region: 'eu' },
+  'betfair_ex_eu':  { nombre: 'Betfair Exchange', region: 'eu' },
+  'betfair_ex_uk':  { nombre: 'Betfair Exchange', region: 'uk' },
+  'betway':         { nombre: 'Betway',           region: 'uk' },
+  // Bet365 y Doradobet no están en la API gratuita
+};
+
+const MIS_KEYS = Object.keys(MIS_CASAS);
 
 /**
- * Detecta si apuesta está disponible en bookmakers específicos
+ * Filtra bookmakers del evento para solo las casas del usuario
  */
-export function detectarDisponibilidad(bookmakers, bookmarkersTarget = ['bet365', 'doradobet']) {
-  if (!bookmakers || bookmakers.length === 0) {
-    return {
-      disponible: false,
-      casas: []
+export function filtrarMisCasas(eventBookmakers) {
+  if (!eventBookmakers || eventBookmakers.length === 0) return [];
+  
+  return eventBookmakers.filter(b => 
+    MIS_KEYS.some(key => b.key.toLowerCase() === key)
+  );
+}
+
+/**
+ * Obtiene los mejores odds de MIS casas para un outcome
+ * Retorna: { odds, bookmaker, key, nombre } o null
+ */
+export function mejorOddMisCasas(eventBookmakers, outcomeName) {
+  if (!eventBookmakers || eventBookmakers.length === 0) return null;
+
+  let mejor = null;
+
+  for (const book of eventBookmakers) {
+    const esMia = MIS_KEYS.some(key => book.key.toLowerCase() === key);
+    if (!esMia) continue;
+
+    const h2h = book.markets?.find(m => m.key === 'h2h');
+    if (!h2h || !h2h.outcomes) continue;
+
+    const outcome = h2h.outcomes.find(o => o.name === outcomeName);
+    if (!outcome) continue;
+
+    const info = MIS_CASAS[book.key.toLowerCase()];
+    const entry = {
+      odds: outcome.price,
+      key: book.key,
+      bookmaker: book.title || book.key,
+      nombre: info?.nombre || book.title || book.key
     };
+
+    if (!mejor || entry.odds > mejor.odds) {
+      mejor = entry;
+    }
   }
 
-  const casasEncontradas = bookmakers
-    .filter(b => bookmarkersTarget.some(target => b.key.toLowerCase().includes(target)))
-    .map(b => ({
-      nombre: b.title || b.key,
-      key: b.key
-    }));
+  return mejor;
+}
+
+/**
+ * Detecta en cuáles de mis casas está disponible el evento
+ */
+export function detectarDisponibilidad(eventBookmakers) {
+  if (!eventBookmakers || eventBookmakers.length === 0) {
+    return { disponible: false, casas: [], cantidad: 0 };
+  }
+
+  const casasEncontradas = [];
+
+  for (const book of eventBookmakers) {
+    const info = MIS_CASAS[book.key.toLowerCase()];
+    if (info) {
+      casasEncontradas.push({
+        nombre: info.nombre,
+        key: book.key
+      });
+    }
+  }
 
   return {
     disponible: casasEncontradas.length > 0,
@@ -29,103 +90,39 @@ export function detectarDisponibilidad(bookmakers, bookmarkersTarget = ['bet365'
 }
 
 /**
- * Obtiene mejores odds de bookmakers específicos
+ * Scoring basado en disponibilidad en mis casas
  */
-export function mejoresOddsBookmakers(bookmakers, outcome, targetBookmakers = ['bet365', 'doradobet']) {
-  if (!bookmakers || bookmakers.length === 0) return null;
-
-  const oddsDisponibles = bookmakers
-    .filter(b => targetBookmakers.some(target => b.key.toLowerCase().includes(target)))
-    .map(b => {
-      const h2h = b.markets?.find(m => m.key === 'h2h');
-      if (!h2h || !h2h.outcomes) return null;
-
-      const resultado = h2h.outcomes.find(o => o.name === outcome);
-      if (!resultado) return null;
-
-      return {
-        bookmaker: b.title || b.key,
-        key: b.key,
-        odds: resultado.price,
-        lastUpdate: b.last_update
-      };
-    })
-    .filter(Boolean);
-
-  if (oddsDisponibles.length === 0) return null;
-
-  // Retornar el mejor (odds más alto)
-  return oddsDisponibles.reduce((prev, current) => 
-    (current.odds > prev.odds) ? current : prev
-  );
+export function scoreDisponibilidadPrincipal(disponibilidad) {
+  if (disponibilidad.cantidad >= 3) return 15;  // 3+ casas mías
+  if (disponibilidad.cantidad === 2) return 10;  // 2 casas
+  if (disponibilidad.cantidad === 1) return 5;   // 1 casa
+  return 0; // ninguna de mis casas
 }
 
 /**
- * Compara odds entre casa principal y mercado general
- * Para detectar value
+ * Compara odds de mis casas vs mercado general
  */
-export function analizarDiferencialPrincipal(mejorOddPrincipal, mejorOddMercado) {
-  if (!mejorOddPrincipal || !mejorOddMercado) return null;
+export function analizarVentajaMisCasas(mejorOddMia, mejorOddMercado) {
+  if (!mejorOddMia || !mejorOddMercado) return null;
 
-  const diferencia = mejorOddPrincipal - mejorOddMercado;
+  const diferencia = mejorOddMia - mejorOddMercado;
   const porcentaje = ((diferencia / mejorOddMercado) * 100).toFixed(2);
 
   return {
     diferencia: diferencia.toFixed(4),
-    porcentaje: porcentaje,
-    ventaja: diferencia > 0 ? 'favorable' : 'desfavorable',
-    recomendacion: Math.abs(parseFloat(porcentaje)) > 2 ? 'apostar' : 'vigilar'
+    porcentaje,
+    ventaja: diferencia >= 0 ? 'favorable' : 'peor',
+    mensaje: diferencia >= 0 
+      ? `Mis odds son +${porcentaje}% vs mercado`
+      : `Mercado tiene ${Math.abs(porcentaje)}% mejores odds`
   };
-}
-
-/**
- * Obtiene disponibilidad y odds de todas las casas conocidas
- */
-export function resumenDisponibilidad(bookmakers) {
-  if (!bookmakers || bookmakers.length === 0) {
-    return { total: 0, detalles: [] };
-  }
-
-  const detalles = bookmakers.map(b => {
-    const h2h = b.markets?.find(m => m.key === 'h2h');
-    const outcomes = h2h?.outcomes || [];
-    
-    return {
-      nombre: b.title || b.key,
-      key: b.key,
-      cantidad_mercados: outcomes.length,
-      actualizado: b.last_update
-    };
-  });
-
-  return {
-    total: bookmakers.length,
-    detalles: detalles,
-    bet365_disponible: detalles.some(d => d.key.toLowerCase().includes('bet365')),
-    doradobet_disponible: detalles.some(d => d.key.toLowerCase().includes('doradobet'))
-  };
-}
-
-/**
- * Scoring específico para Doradobet + Bet365
- * Bonifica si está en ambas casas
- */
-export function scoreDisponibilidadPrincipal(disponibilidad) {
-  let bonus = 0;
-
-  if (disponibilidad.casas.length === 2) {
-    bonus += 15; // Está en ambas = muy bueno
-  } else if (disponibilidad.casas.length === 1) {
-    bonus += 10; // Está en al menos una
-  }
-
-  return bonus;
 }
 
 export default {
+  MIS_CASAS,
+  filtrarMisCasas,
+  mejorOddMisCasas,
   detectarDisponibilidad,
-  mejoresOddsBookmakers,
-  analizarDiferencialPrincipal,
-  resumenDisponibilidad,
-  scoreDisponibilidadPrincipal
+  scoreDisponibilidadPrincipal,
+  analizarVentajaMisCasas
 };

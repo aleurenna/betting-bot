@@ -46,8 +46,8 @@ const PREFERRED_SPORTS = [
   'baseball_mlb'
 ];
 
-// Regiones combinadas en UNA llamada (mejora #1)
-const REGIONS_STRING = process.env.REGIONS || 'eu,us';
+// Regiones: eu (1xBet, Betfair, Pinnacle), uk (Betway, Betfair)
+const REGIONS_STRING = process.env.REGIONS || 'eu,uk';
 
 // ─────────────────────────────────────────────
 // FUNCIÓN PRINCIPAL
@@ -361,17 +361,24 @@ function analizarOdds(oddsData, sport, bankroll, moneda) {
 }
 
 /**
- * MEJORA #2 + #4: Analiza un outcome con Pinnacle + scoring completo
+ * Analiza un outcome: prob real de Pinnacle, EV contra MIS casas
  */
 function analizarOutcome(data, bankroll, moneda) {
   const { evento, equipo, tipo, deporte, liga, fechaEvento, oddsDetallados, eventBookmakers, allOutcomeNames } = data;
   
   const oddsArray = oddsDetallados.map(d => d.odds);
-  const mejorOdd = Math.max(...oddsArray);
-  const mejorBookmaker = oddsDetallados.find(d => d.odds === mejorOdd);
   const oddPromedio = oddsArray.reduce((a, b) => a + b, 0) / oddsArray.length;
   
-  // MEJORA #2: Usar Pinnacle como referencia para probabilidad real
+  // Mejor odds de MIS casas (donde puedo apostar)
+  const miMejorOdd = bookmakers.mejorOddMisCasas(eventBookmakers, equipo);
+  
+  // Si ninguna de mis casas tiene este evento, skip
+  if (!miMejorOdd) return null;
+  
+  // Mejor odds del mercado general (para referencia)
+  const mejorOddMercado = Math.max(...oddsArray);
+  
+  // Probabilidad real desde Pinnacle (o mediana como fallback)
   const probData = calcularProbReal(eventBookmakers, equipo, allOutcomeNames);
   
   let probabilidad, fuenteProb;
@@ -379,7 +386,6 @@ function analizarOutcome(data, bankroll, moneda) {
     probabilidad = probData.probabilidad;
     fuenteProb = probData.fuente;
   } else {
-    // Fallback: mediana de odds (más robusto que promedio)
     const sorted = [...oddsArray].sort((a, b) => a - b);
     const mediana = sorted.length % 2 === 0
       ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
@@ -388,31 +394,30 @@ function analizarOutcome(data, bankroll, moneda) {
     fuenteProb = 'mediana';
   }
   
-  // Calcular EV contra mejores odds disponibles
-  const ev = calc.calcularEV(probabilidad, mejorOdd);
+  // EV calculado contra MIS odds (no las del mercado general)
+  const ev = calc.calcularEV(probabilidad, miMejorOdd.odds);
   if (ev <= 0.02) return null;
   
-  const kelly = calc.kellyPercentage(probabilidad, mejorOdd);
-  const diferencialOdds = (mejorOdd - oddPromedio) / oddPromedio;
+  const kelly = calc.kellyPercentage(probabilidad, miMejorOdd.odds);
+  const diferencialOdds = (miMejorOdd.odds - oddPromedio) / oddPromedio;
   
-  // Apuesta con Kelly
+  // Apuesta calculada con MIS odds
   const monedaMinima = moneda === 'CRC' ? 100 : 1;
-  const apuestaInfo = calc.calcularApuesta(bankroll, probabilidad, mejorOdd, monedaMinima, 0.05);
+  const apuestaInfo = calc.calcularApuesta(bankroll, probabilidad, miMejorOdd.odds, monedaMinima, 0.05);
   
-  // Disponibilidad Doradobet + Bet365
+  // Disponibilidad en mis casas
   const disponibilidad = bookmakers.detectarDisponibilidad(eventBookmakers);
   
-  // MEJORA #4: Scoring completo con datos reales
+  // Scoring
   const tieneSharp = fuenteProb.startsWith('sharp');
-  const casasConMejorOdd = oddsDetallados.filter(d => d.odds >= oddPromedio * 1.02).length;
-  const spreadOdds = mejorOdd - Math.min(...oddsArray);
+  const spreadOdds = mejorOddMercado - Math.min(...oddsArray);
   
   let score = calcularScorePro({
     ev,
     diferencialOdds,
     consensoCasas: oddsArray.length,
     tieneSharp,
-    casasConMejorOdd,
+    casasConMejorOdd: disponibilidad.cantidad,
     spreadOdds,
     probabilidad
   });
@@ -421,16 +426,17 @@ function analizarOutcome(data, bankroll, moneda) {
   
   return {
     evento, equipo, tipo, deporte, liga, fechaEvento,
-    odds: mejorOdd,
+    odds: miMejorOdd.odds,             // Odds de MI mejor casa
     oddPromedio,
-    mejorBookmaker: mejorBookmaker?.title || mejorBookmaker?.bookmaker || 'N/A',
+    mejorOddMercado,                    // Para referencia
+    mejorBookmaker: miMejorOdd.nombre,  // Dónde apostar
     probabilidad: (probabilidad * 100).toFixed(2),
     ev: (ev * 100).toFixed(2),
     kelly: (kelly * 100).toFixed(2),
     apuesta: apuestaInfo.cantidad,
     moneda,
     riesgoNivel: apuestaInfo.riesgo_nivel,
-    gananciaSiGana: (apuestaInfo.cantidad * (mejorOdd - 1)).toFixed(2),
+    gananciaSiGana: (apuestaInfo.cantidad * (miMejorOdd.odds - 1)).toFixed(2),
     pérdidaSiPierde: (-apuestaInfo.cantidad).toFixed(2),
     score: score.toFixed(0),
     diferencialOdds: (diferencialOdds * 100).toFixed(2),

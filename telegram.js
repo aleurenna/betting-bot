@@ -151,9 +151,8 @@ function formatearApuestaIndividual(ap, numero, simbolo, moneda) {
   msg += `\n`;
 
   // Odds y análisis
-  msg += `💰 Odds: <code>${parseFloat(ap.odds).toFixed(2)}</code>`;
-  if (ap.mejorBookmaker) msg += ` (${ap.mejorBookmaker})`;
-  msg += `\n`;
+  msg += `💰 Odds: <code>${parseFloat(ap.odds).toFixed(2)}</code>\n`;
+  msg += `🏦 <b>Apostar en → ${ap.mejorBookmaker || 'mejor disponible'}</b>\n`;
   
   msg += `📊 Prob: <code>${ap.probabilidad}%</code> | EV: <code>+${ap.ev}%</code>\n`;
   
@@ -164,11 +163,11 @@ function formatearApuestaIndividual(ap, numero, simbolo, moneda) {
   }
 
   // Casas disponibles
-  if (ap.disponibleEnPrincipales) {
-    const casas = ap.casasPrincipales.map(c => c.nombre).join(' + ');
-    msg += `✅ ${casas}\n`;
-  } else {
-    msg += `⚠️ No en Doradobet/Bet365 (${ap.consensoCasas} alternativas)\n`;
+  if (ap.disponibleEnPrincipales && ap.casasPrincipales?.length > 1) {
+    const otras = ap.casasPrincipales
+      .filter(c => c.nombre !== ap.mejorBookmaker)
+      .map(c => c.nombre).join(', ');
+    if (otras) msg += `📋 También en: ${otras}\n`;
   }
   
   msg += `\n`;
