@@ -35,7 +35,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           BANKROLL_INICIAL: ${{ secrets.BANKROLL_INICIAL }}
           MONEDA: ${{ secrets.MONEDA }}
-          REGIONS: 'eu,us'
+          REGIONS: 'eu,uk'
           NODE_ENV: 'production'
         run: node index.js --once
 
