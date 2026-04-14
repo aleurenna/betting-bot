@@ -93,15 +93,21 @@ function formatearMensaje(recomendaciones, bankroll = 20, moneda = 'USD') {
     mensaje += `<b>${index + 1}. ${emoji} ${apuesta.liga}</b>\n`;
     mensaje += `🎯 <b>${apuesta.equipo}</b>\n`;
     mensaje += `🏟️ ${apuesta.evento}\n`;
-    mensaje += `💰 Odds: <code>${parseFloat(apuesta.odds).toFixed(2)}</code> | Prob: <code>${apuesta.probabilidad}%</code>\n`;
-    mensaje += `📊 EV: <code>+${apuesta.ev}%</code> | Kelly: <code>${apuesta.kelly}%</code>\n`;
+    mensaje += `💰 Odds: <code>${parseFloat(apuesta.odds).toFixed(2)}</code> (${apuesta.mejorBookmaker || 'mejor disponible'})\n`;
+    mensaje += `📊 Prob: <code>${apuesta.probabilidad}%</code> | EV: <code>+${apuesta.ev}%</code> | Kelly: <code>${apuesta.kelly}%</code>\n`;
+    
+    // Fuente de probabilidad (Pinnacle vs mediana)
+    const fuente = apuesta.fuenteProbabilidad || 'promedio';
+    if (fuente.startsWith('sharp')) {
+      mensaje += `🎯 <b>Ref: Pinnacle</b> (prob. real ajustada)\n`;
+    }
     
     // DISPONIBILIDAD EN CASAS PRINCIPALES
     if (apuesta.disponibleEnPrincipales) {
       const casasNombres = apuesta.casasPrincipales.map(c => c.nombre).join(' + ');
-      mensaje += `✅ <b>Disponible en:</b> ${casasNombres}\n`;
+      mensaje += `✅ Disponible en: ${casasNombres}\n`;
     } else {
-      mensaje += `⚠️ <b>No disponible en Doradobet/Bet365</b> (${apuesta.consensoCasas} casas alternativas)\n`;
+      mensaje += `⚠️ No en Doradobet/Bet365 (${apuesta.consensoCasas} alternativas)\n`;
     }
     
     // APUESTA RECOMENDADA
@@ -141,42 +147,36 @@ function formatearMensaje(recomendaciones, bankroll = 20, moneda = 'USD') {
 function generarExplicacion(apuesta) {
   let explicacion = '';
   
-  // 1. EV
+  // Fuente de probabilidad
+  const fuente = apuesta.fuenteProbabilidad || 'promedio';
+  if (fuente.startsWith('sharp')) {
+    explicacion += `• <b>Pinnacle confirma:</b> Línea sharp respalda esta apuesta\n`;
+  }
+  
+  // EV
   const ev = parseFloat(apuesta.ev);
-  if (ev > 5) {
-    explicacion += `• <b>EV Excelente:</b> +${ev}% es un edge muy fuerte\n`;
-  } else if (ev > 3) {
-    explicacion += `• <b>EV Muy Bueno:</b> +${ev}% indica valor real\n`;
-  } else {
-    explicacion += `• <b>EV Positivo:</b> +${ev}% a favor del apostador\n`;
-  }
+  if (ev > 5) explicacion += `• <b>EV Excelente:</b> +${ev}% edge muy fuerte\n`;
+  else if (ev > 3) explicacion += `• <b>EV Muy Bueno:</b> +${ev}% valor real\n`;
+  else explicacion += `• <b>EV Positivo:</b> +${ev}% a favor\n`;
   
-  // 2. Probabilidad
+  // Probabilidad
   const prob = parseFloat(apuesta.probabilidad);
-  if (prob > 65) {
-    explicacion += `• <b>Favorito Claro:</b> ${prob}% implícito vs mercado\n`;
-  } else if (prob > 55) {
-    explicacion += `• <b>Ligero Favorito:</b> Probabilidad ${prob}% es sólida\n`;
+  if (prob > 65) explicacion += `• <b>Favorito Claro:</b> ${prob}% probabilidad\n`;
+  else if (prob > 55) explicacion += `• <b>Ligero Favorito:</b> ${prob}% sólido\n`;
+  
+  // Consenso
+  if (parseInt(apuesta.consensoCasas) >= 6) {
+    explicacion += `• <b>Gran Consenso:</b> ${apuesta.consensoCasas} casas con línea similar\n`;
   }
   
-  // 3. Consenso
-  const consenso = parseInt(apuesta.consensoCasas);
-  if (consenso >= 4) {
-    explicacion += `• <b>Gran Consenso:</b> ${consenso} casas coinciden en línea\n`;
+  // Diferencial
+  if (parseFloat(apuesta.diferencialOdds) > 5) {
+    explicacion += `• <b>Odds Premium:</b> +${apuesta.diferencialOdds}% mejor que mercado\n`;
   }
   
-  // 4. Diferencial
-  const diff = parseFloat(apuesta.diferencialOdds);
-  if (diff > 5) {
-    explicacion += `• <b>Buenas Odds:</b> Consigues ${diff}% mejor que promedio\n`;
-  }
-  
-  // 5. Score
-  const score = parseInt(apuesta.score);
-  if (score > 80) {
-    explicacion += `• <b>Condiciones Óptimas:</b> Todos los factores alineados\n`;
-  } else if (score > 70) {
-    explicacion += `• <b>Buena Oportunidad:</b> Múltiples confirmaciones positivas\n`;
+  // Mejor bookmaker
+  if (apuesta.mejorBookmaker) {
+    explicacion += `• <b>Apostar en:</b> ${apuesta.mejorBookmaker}\n`;
   }
 
   return explicacion;

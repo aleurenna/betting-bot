@@ -1,6 +1,11 @@
 /**
- * BOT DE APUESTAS CON EV+ STRATEGY
- * Integra The Odds API + datos estadísticos gratuitos
+ * BOT DE APUESTAS CON EV+ STRATEGY v2.0
+ * 
+ * Mejoras PRO:
+ * 1. Regiones combinadas en una sola llamada API
+ * 2. Pinnacle como referencia "sharp" para probabilidad real
+ * 3. Límite de créditos por ejecución
+ * 4. Scoring completo basado en datos reales
  */
 
 import axios from 'axios';
@@ -13,17 +18,23 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
+const MAX_CREDITOS_RUN = parseInt(process.env.MAX_CREDITOS_RUN || '30');
+let creditosUsadosRun = 0;
+let creditosRestantes = 500;
 
-// Deportes preferidos (se filtran contra los activos en la API)
+// Bookmaker de referencia (el más sharp del mercado)
+const SHARP_BOOKMAKER = 'pinnacle';
+const SHARP_FALLBACKS = ['betfair_ex_eu', 'matchbook', 'betclic'];
+
+// Deportes preferidos (se validan contra activos vía API gratis)
 const PREFERRED_SPORTS = [
-  // Fútbol
   'soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a',
   'soccer_germany_bundesliga', 'soccer_france_ligue_one',
   'soccer_uefa_champs_league', 'soccer_uefa_europa_league',
   'soccer_usa_mls', 'soccer_mexico_ligamx', 'soccer_brazil_campeonato',
-  // Basketball
+  'soccer_efl_champ', 'soccer_argentina_primera_division',
+  'soccer_portugal_primeira_liga', 'soccer_netherlands_eredivisie',
   'basketball_nba', 'basketball_euroleague',
-  // Tennis (torneos específicos - se detectan automáticamente)
   'tennis_atp_aus_open_singles', 'tennis_atp_french_open',
   'tennis_atp_wimbledon', 'tennis_atp_us_open',
   'tennis_atp_indian_wells', 'tennis_atp_miami_open',
@@ -32,120 +43,84 @@ const PREFERRED_SPORTS = [
   'tennis_atp_shanghai_masters', 'tennis_atp_canadian_open',
   'tennis_wta_french_open', 'tennis_wta_wimbledon', 'tennis_wta_us_open',
   'tennis_wta_madrid_open', 'tennis_wta_italian_open',
-  // MLB (en temporada)
   'baseball_mlb'
 ];
 
-// Regiones
-const DEFAULT_REGIONS = 'eu,us';
-const REGIONS = (process.env.REGIONS || DEFAULT_REGIONS).split(',').map(s => s.trim()).filter(Boolean);
+// Regiones combinadas en UNA llamada (mejora #1)
+const REGIONS_STRING = process.env.REGIONS || 'eu,us';
 
-const MARKETS = ['h2h'];
-let creditosRestantes = 500;
+// ─────────────────────────────────────────────
+// FUNCIÓN PRINCIPAL
+// ─────────────────────────────────────────────
 
-/**
- * Obtiene deportes activos desde la API (GRATIS, no consume créditos)
- */
-async function obtenerDeportesActivos() {
-  try {
-    const url = 'https://api.the-odds-api.com/v4/sports';
-    const response = await axios.get(url, {
-      params: { apiKey: ODDS_API_KEY },
-      timeout: 10000
-    });
-
-    const activos = response.data
-      .filter(s => s.active && !s.has_outrights)
-      .map(s => s.key);
-
-    // Filtrar solo los preferidos que están activos
-    const deportesAUsar = PREFERRED_SPORTS.filter(s => activos.includes(s));
-
-    // Si hay env override, usarlo pero validar contra activos
-    if (process.env.SPORTS) {
-      const envSports = process.env.SPORTS.split(',').map(s => s.trim());
-      const envActivos = envSports.filter(s => activos.includes(s));
-      if (envActivos.length > 0) return envActivos;
-    }
-
-    console.log(`🌐 Deportes activos encontrados: ${deportesAUsar.length}/${activos.length} total`);
-    console.log(`   → ${deportesAUsar.join(', ')}`);
-    return deportesAUsar;
-
-  } catch (error) {
-    console.error('⚠️ Error obteniendo deportes activos:', error.message);
-    // Fallback a deportes seguros
-    return ['soccer_epl', 'soccer_spain_la_liga', 'basketball_nba'];
-  }
-}
-
-/**
- * Función principal - Ejecuta análisis de apuestas
- */
 export async function ejecutarBot() {
-  console.log('🤖 Iniciando análisis de apuestas...');
+  console.log('🤖 Iniciando análisis de apuestas v2.0...');
   console.log(`⏰ ${new Date().toISOString()}`);
+  creditosUsadosRun = 0;
   
   try {
     await db.inicializarDB();
     
-    // Obtener configuración
     const bankroll = parseFloat(process.env.BANKROLL_INICIAL || '20');
     const moneda = process.env.MONEDA || 'USD';
-    const simboloMoneda = moneda === 'CRC' ? '₡' : '$';
+    const simbolo = moneda === 'CRC' ? '₡' : '$';
     
-    console.log(`💰 Bankroll: ${simboloMoneda}${bankroll.toFixed(2)} ${moneda}`);
+    console.log(`💰 Bankroll: ${simbolo}${bankroll.toFixed(2)} ${moneda}`);
+    console.log(`🔒 Límite créditos esta ejecución: ${MAX_CREDITOS_RUN}`);
     
-    // Obtener deportes activos (GRATIS)
+    // Deportes activos (GRATIS)
     const SPORTS = await obtenerDeportesActivos();
-    
     if (SPORTS.length === 0) {
-      console.log('⚠️ No hay deportes activos en este momento');
+      console.log('⚠️ No hay deportes activos');
       return [];
     }
     
-    const creditosEstimados = SPORTS.length * REGIONS.length;
-    console.log(`📋 Config: ${SPORTS.length} deportes × ${REGIONS.length} regiones = ~${creditosEstimados} créditos`);
+    // Regiones combinadas = 1 call por deporte en vez de N
+    const numRegiones = REGIONS_STRING.split(',').length;
+    console.log(`📋 ${SPORTS.length} deportes × ${numRegiones} regiones (1 call/deporte) = ~${SPORTS.length * numRegiones} créditos`);
     
-    // Obtener eventos ya recomendados para evitar duplicados
     const eventosRecientes = await db.obtenerEventosRecientes(3);
-    console.log(`📋 Eventos recientes para evitar duplicados: ${eventosRecientes.length}`);
+    console.log(`📋 Eventos recientes (anti-duplicados): ${eventosRecientes.length}`);
     
     let recomendaciones = [];
     
-    // Por cada deporte
+    // MEJORA #1: Una sola llamada por deporte con todas las regiones
     for (const sport of SPORTS) {
-      for (const region of REGIONS) {
-        try {
-          const odds = await obtenerOdds(sport, region);
+      // MEJORA #3: Verificar presupuesto de créditos
+      if (creditosUsadosRun >= MAX_CREDITOS_RUN) {
+        console.log(`🔒 Límite de créditos alcanzado (${creditosUsadosRun}/${MAX_CREDITOS_RUN}). Deteniendo.`);
+        break;
+      }
+      
+      try {
+        const odds = await obtenerOdds(sport);
+        
+        if (odds && odds.length > 0) {
+          const oddsNoRepetidos = odds.filter(evento => {
+            return !eventosRecientes.some(prev => 
+              prev.evento === `${evento.home_team} vs ${evento.away_team}` &&
+              new Date(prev.fecha_evento).getDate() === new Date(evento.commence_time).getDate()
+            );
+          });
           
-          if (odds && odds.length > 0) {
-            // Filtrar eventos que ya fueron recomendados
-            const oddsNoRepetidos = odds.filter(evento => {
-              return !eventosRecientes.some(prev => 
-                prev.evento === `${evento.home_team} vs ${evento.away_team}` &&
-                new Date(prev.fecha_evento).getDate() === new Date(evento.commence_time).getDate()
-              );
-            });
-            
-            if (oddsNoRepetidos.length > 0) {
-              const analisis = await analizarOdds(oddsNoRepetidos, sport, region, bankroll, moneda);
-              recomendaciones = [...recomendaciones, ...analisis];
-            }
+          if (oddsNoRepetidos.length > 0) {
+            const analisis = analizarOdds(oddsNoRepetidos, sport, bankroll, moneda);
+            recomendaciones = [...recomendaciones, ...analisis];
           }
-        } catch (error) {
-          console.error(`❌ Error en ${sport} - ${region}:`, error.message);
         }
+      } catch (error) {
+        console.error(`❌ Error en ${sport}:`, error.message);
       }
     }
     
-    // Filtrar por EV positivo y score alto
+    // Filtrar EV+ y score alto
     const buenasApuestas = recomendaciones
       .filter(r => r.ev > 0.02 && r.score > 50)
       .sort((a, b) => b.score - a.score)
-      .slice(0, 10); // Top 10
+      .slice(0, 10);
     
-    console.log(`✅ Nuevas apuestas encontradas (sin repetidos): ${buenasApuestas.length}`);
+    console.log(`✅ Apuestas EV+ encontradas: ${buenasApuestas.length}`);
+    console.log(`💳 Créditos usados esta ejecución: ${creditosUsadosRun}`);
     
     // Guardar en BD
     for (const apuesta of buenasApuestas) {
@@ -164,7 +139,6 @@ export async function ejecutarBot() {
       });
     }
     
-    // Enviar a Telegram
     if (buenasApuestas.length > 0) {
       await enviarTelegram(buenasApuestas, bankroll, moneda);
     }
@@ -173,135 +147,208 @@ export async function ejecutarBot() {
     
   } catch (error) {
     console.error('❌ Error en bot:', error);
-    await enviarTelegram([{ 
-      error: true, 
-      mensaje: `Error en bot: ${error.message}` 
-    }]);
+    await enviarTelegram([{ error: true, mensaje: `Error en bot: ${error.message}` }]);
+  }
+}
+
+// ─────────────────────────────────────────────
+// API CALLS
+// ─────────────────────────────────────────────
+
+/**
+ * Obtiene deportes activos (GRATIS, 0 créditos)
+ */
+async function obtenerDeportesActivos() {
+  try {
+    const response = await axios.get('https://api.the-odds-api.com/v4/sports', {
+      params: { apiKey: ODDS_API_KEY },
+      timeout: 10000
+    });
+
+    const activos = response.data
+      .filter(s => s.active && !s.has_outrights)
+      .map(s => s.key);
+
+    // Validar env override contra activos
+    if (process.env.SPORTS) {
+      const envSports = process.env.SPORTS.split(',').map(s => s.trim());
+      const envActivos = envSports.filter(s => activos.includes(s));
+      if (envActivos.length > 0) {
+        console.log(`🌐 Deportes (env override): ${envActivos.join(', ')}`);
+        return envActivos;
+      }
+    }
+
+    const deportes = PREFERRED_SPORTS.filter(s => activos.includes(s));
+    console.log(`🌐 Deportes activos: ${deportes.length}/${activos.length} total`);
+    deportes.forEach(d => console.log(`   ✓ ${d}`));
+    return deportes;
+
+  } catch (error) {
+    console.error('⚠️ Error obteniendo deportes activos:', error.message);
+    return ['soccer_epl', 'soccer_spain_la_liga', 'basketball_nba'];
   }
 }
 
 /**
- * Obtiene odds de The Odds API
- * Nota: API retorna eventos live + próximos (sin filtro específico de días)
- * Filtramos en la BD para evitar eventos muy lejanos
+ * MEJORA #1: Obtiene odds con TODAS las regiones en UNA llamada
+ * Antes: 1 call por deporte × región. Ahora: 1 call por deporte.
  */
-async function obtenerOdds(sport, region) {
+async function obtenerOdds(sport) {
   try {
-    const url = `https://api.the-odds-api.com/v4/sports/${sport}/odds`;
-    
-    const response = await axios.get(url, {
+    const response = await axios.get(`https://api.the-odds-api.com/v4/sports/${sport}/odds`, {
       params: {
         apiKey: ODDS_API_KEY,
-        regions: region,
-        markets: MARKETS.join(','),
+        regions: REGIONS_STRING,  // "eu,us" en una sola llamada
+        markets: 'h2h',
         oddsFormat: 'decimal'
       },
       timeout: 10000
     });
     
-    // Registrar uso de créditos
-    const creditosUsados = parseInt(response.headers['x-requests-last'] || 1);
+    // Registrar créditos reales del header
+    const creditosUsados = parseInt(response.headers['x-requests-used'] || 0);
     creditosRestantes = parseInt(response.headers['x-requests-remaining'] || 500);
+    const costeLlamada = REGIONS_STRING.split(',').length; // 1 crédito por región
+    creditosUsadosRun += costeLlamada;
     
-    await db.registrarUsoCréditos(creditosUsados, 'odds', sport, region, true);
+    await db.registrarUsoCréditos(costeLlamada, 'odds', sport, REGIONS_STRING, true);
     
-    // Filtrar eventos a próximos 3 días
-    const ahora = new Date();
-    const hace3Dias = new Date(ahora.getTime() + 3 * 24 * 60 * 60 * 1000);
+    // Filtrar próximos 3 días
+    const limite = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+    const eventos = response.data.filter(e => new Date(e.commence_time) <= limite);
     
-    const eventosFiltrados = response.data.filter(evento => {
-      const fechaEvento = new Date(evento.commence_time);
-      return fechaEvento <= hace3Dias;
-    });
+    console.log(`📊 ${sport}: ${eventos.length}/${response.data.length} eventos (3 días) | créditos: ${creditosUsadosRun}/${MAX_CREDITOS_RUN} run, ${creditosRestantes} restantes`);
     
-    console.log(`📊 ${sport} (${region}): ${eventosFiltrados.length}/${response.data.length} eventos en próximos 3 días | ${creditosRestantes} créditos`);
-    
-    return eventosFiltrados;
+    return eventos;
     
   } catch (error) {
-    console.error(`❌ Error obteniendo odds para ${sport}:`, error.message);
-    await db.registrarUsoCréditos(1, 'odds', sport, region, false);
+    if (error.response?.status === 404) {
+      console.log(`⚠️ ${sport}: no disponible (404)`);
+    } else {
+      console.error(`❌ Error odds ${sport}:`, error.message);
+    }
+    creditosUsadosRun += 1;
+    await db.registrarUsoCréditos(1, 'odds', sport, REGIONS_STRING, false);
     return null;
   }
 }
 
+// ─────────────────────────────────────────────
+// ANÁLISIS CON PINNACLE
+// ─────────────────────────────────────────────
+
 /**
- * Analiza odds y genera recomendaciones
+ * MEJORA #2: Extrae odds de Pinnacle (o sharp fallback) para un outcome
+ * Pinnacle es el bookmaker más sharp - sus odds reflejan la probabilidad "real"
  */
-async function analizarOdds(oddsData, sport, region, bankroll, moneda) {
+function extraerOddsSharp(eventBookmakers, outcomeName) {
+  const sharpBooks = [SHARP_BOOKMAKER, ...SHARP_FALLBACKS];
+  
+  for (const sharpKey of sharpBooks) {
+    const book = eventBookmakers.find(b => b.key.toLowerCase().includes(sharpKey));
+    if (!book) continue;
+    
+    const h2h = book.markets?.find(m => m.key === 'h2h');
+    if (!h2h || !h2h.outcomes) continue;
+    
+    const outcome = h2h.outcomes.find(o => o.name === outcomeName);
+    if (outcome) {
+      return { odds: outcome.price, bookmaker: book.key, source: 'sharp' };
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Calcula probabilidad "real" desde Pinnacle odds (removiendo margen)
+ * Pinnacle tiene ~2-3% de margen. Lo removemos para estimar la prob real.
+ */
+function calcularProbReal(eventBookmakers, outcomeName, allOutcomeNames) {
+  const sharpData = extraerOddsSharp(eventBookmakers, outcomeName);
+  
+  if (sharpData) {
+    // Obtener todos los outcomes de Pinnacle para calcular margen
+    const sharpBooks = [SHARP_BOOKMAKER, ...SHARP_FALLBACKS];
+    let pinnacleBook = null;
+    
+    for (const key of sharpBooks) {
+      pinnacleBook = eventBookmakers.find(b => b.key.toLowerCase().includes(key));
+      if (pinnacleBook) break;
+    }
+    
+    if (pinnacleBook) {
+      const h2h = pinnacleBook.markets?.find(m => m.key === 'h2h');
+      if (h2h && h2h.outcomes) {
+        // Suma de probabilidades implícitas = 1 + margen
+        const sumaImplicita = h2h.outcomes.reduce((sum, o) => sum + (1 / o.price), 0);
+        // Probabilidad real = implícita / suma (remueve margen)
+        const probReal = (1 / sharpData.odds) / sumaImplicita;
+        return { probabilidad: probReal, fuente: `sharp:${sharpData.bookmaker}`, margen: ((sumaImplicita - 1) * 100).toFixed(2) };
+      }
+    }
+    
+    // Si no podemos calcular margen, usar implícita directa
+    return { probabilidad: 1 / sharpData.odds, fuente: `sharp:${sharpData.bookmaker}`, margen: 'N/A' };
+  }
+  
+  // Fallback: mediana de todos los bookmakers (más robusto que promedio)
+  return null;
+}
+
+/**
+ * Analiza odds de un evento completo
+ */
+function analizarOdds(oddsData, sport, bankroll, moneda) {
   const recomendaciones = [];
   
   for (const evento of oddsData) {
     const { home_team, away_team, commence_time, bookmakers: eventBookmakers } = evento;
+    if (!eventBookmakers || eventBookmakers.length < 2) continue;
     
-    if (!eventBookmakers || eventBookmakers.length === 0) continue;
-    
-    // Extraer odds h2h
-    const h2hOdds = new Map();
-    const todosOdds = { home: [], away: [], draw: [] };
+    // Recolectar TODOS los odds por outcome, con info de bookmaker
+    const oddsDetallados = { home: [], away: [], draw: [] };
     
     for (const book of eventBookmakers) {
       const h2h = book.markets?.find(m => m.key === 'h2h');
-      if (h2h && h2h.outcomes) {
-        h2hOdds.set(book.key, h2h.outcomes);
-        
-        h2h.outcomes.forEach(outcome => {
-          if (outcome.name === home_team) todosOdds.home.push(outcome.price);
-          else if (outcome.name === away_team) todosOdds.away.push(outcome.price);
-          else if (outcome.name === 'Draw') todosOdds.draw.push(outcome.price);
-        });
-      }
+      if (!h2h || !h2h.outcomes) continue;
+      
+      h2h.outcomes.forEach(outcome => {
+        const entry = { odds: outcome.price, bookmaker: book.key, title: book.title || book.key };
+        if (outcome.name === home_team) oddsDetallados.home.push(entry);
+        else if (outcome.name === away_team) oddsDetallados.away.push(entry);
+        else if (outcome.name === 'Draw') oddsDetallados.draw.push(entry);
+      });
     }
     
-    // Analizar Home, Away y Draw
-    analizarOutcome(
-      {
+    const allOutcomes = [home_team, away_team];
+    if (sport.includes('soccer')) allOutcomes.push('Draw');
+    
+    // Analizar cada outcome
+    const outcomes = [
+      { equipo: home_team, tipo: 'h2h_home', data: oddsDetallados.home },
+      { equipo: away_team, tipo: 'h2h_away', data: oddsDetallados.away }
+    ];
+    
+    if (sport.includes('soccer') && oddsDetallados.draw.length > 0) {
+      outcomes.push({ equipo: 'Draw', tipo: 'h2h_draw', data: oddsDetallados.draw });
+    }
+    
+    for (const { equipo, tipo, data } of outcomes) {
+      if (data.length < 2) continue;
+      
+      const resultado = analizarOutcome({
         evento: `${home_team} vs ${away_team}`,
-        equipo: home_team,
-        tipo: 'h2h_home',
-        deporte: sport,
+        equipo, tipo, deporte: sport,
         liga: obtenerLiga(sport),
         fechaEvento: commence_time,
-        oddsArray: todosOdds.home,
-        bookmarkersData: eventBookmakers
-      },
-      recomendaciones,
-      bankroll,
-      moneda
-    );
-    
-    analizarOutcome(
-      {
-        evento: `${home_team} vs ${away_team}`,
-        equipo: away_team,
-        tipo: 'h2h_away',
-        deporte: sport,
-        liga: obtenerLiga(sport),
-        fechaEvento: commence_time,
-        oddsArray: todosOdds.away,
-        bookmarkersData: eventBookmakers
-      },
-      recomendaciones,
-      bankroll,
-      moneda
-    );
-    
-    if (sport.includes('soccer') && todosOdds.draw.length > 0) {
-      analizarOutcome(
-        {
-          evento: `${home_team} vs ${away_team}`,
-          equipo: 'Draw',
-          tipo: 'h2h_draw',
-          deporte: sport,
-          liga: obtenerLiga(sport),
-          fechaEvento: commence_time,
-          oddsArray: todosOdds.draw,
-          bookmarkersData: eventBookmakers
-        },
-        recomendaciones,
-        bankroll,
-        moneda
-      );
+        oddsDetallados: data,
+        eventBookmakers,
+        allOutcomeNames: allOutcomes
+      }, bankroll, moneda);
+      
+      if (resultado) recomendaciones.push(resultado);
     }
   }
   
@@ -309,93 +356,151 @@ async function analizarOdds(oddsData, sport, region, bankroll, moneda) {
 }
 
 /**
- * Analiza un outcome específico
+ * MEJORA #2 + #4: Analiza un outcome con Pinnacle + scoring completo
  */
-function analizarOutcome(data, recomendaciones, bankroll, moneda) {
-  const { evento, equipo, tipo, deporte, liga, fechaEvento, oddsArray, bookmarkersData } = data;
+function analizarOutcome(data, bankroll, moneda) {
+  const { evento, equipo, tipo, deporte, liga, fechaEvento, oddsDetallados, eventBookmakers, allOutcomeNames } = data;
   
-  if (!oddsArray || oddsArray.length === 0) return;
-  
+  const oddsArray = oddsDetallados.map(d => d.odds);
   const mejorOdd = Math.max(...oddsArray);
+  const mejorBookmaker = oddsDetallados.find(d => d.odds === mejorOdd);
   const oddPromedio = oddsArray.reduce((a, b) => a + b, 0) / oddsArray.length;
-  const probabilidad = calc.probImplicita(oddPromedio);
   
-  // Calcular EV usando probabilidad estimada (por ahora = implícita)
+  // MEJORA #2: Usar Pinnacle como referencia para probabilidad real
+  const probData = calcularProbReal(eventBookmakers, equipo, allOutcomeNames);
+  
+  let probabilidad, fuenteProb;
+  if (probData) {
+    probabilidad = probData.probabilidad;
+    fuenteProb = probData.fuente;
+  } else {
+    // Fallback: mediana de odds (más robusto que promedio)
+    const sorted = [...oddsArray].sort((a, b) => a - b);
+    const mediana = sorted.length % 2 === 0
+      ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
+      : sorted[Math.floor(sorted.length / 2)];
+    probabilidad = 1 / mediana;
+    fuenteProb = 'mediana';
+  }
+  
+  // Calcular EV contra mejores odds disponibles
   const ev = calc.calcularEV(probabilidad, mejorOdd);
-  
-  // Solo considerar si EV > 2%
-  if (ev <= 0.02) return;
+  if (ev <= 0.02) return null;
   
   const kelly = calc.kellyPercentage(probabilidad, mejorOdd);
   const diferencialOdds = (mejorOdd - oddPromedio) / oddPromedio;
   
-  // Calcular cantidad a apostar
+  // Apuesta con Kelly
   const monedaMinima = moneda === 'CRC' ? 100 : 1;
   const apuestaInfo = calc.calcularApuesta(bankroll, probabilidad, mejorOdd, monedaMinima, 0.05);
   
-  // Detectar disponibilidad en Doradobet + Bet365
-  const disponibilidad = bookmakers.detectarDisponibilidad(bookmarkersData);
+  // Disponibilidad Doradobet + Bet365
+  const disponibilidad = bookmakers.detectarDisponibilidad(eventBookmakers);
   
-  let score = calc.scoreApuesta({
+  // MEJORA #4: Scoring completo con datos reales
+  const tieneSharp = fuenteProb.startsWith('sharp');
+  const casasConMejorOdd = oddsDetallados.filter(d => d.odds >= oddPromedio * 1.02).length;
+  const spreadOdds = mejorOdd - Math.min(...oddsArray);
+  
+  let score = calcularScorePro({
     ev,
     diferencialOdds,
-    consensoCasas: oddsArray.length
+    consensoCasas: oddsArray.length,
+    tieneSharp,
+    casasConMejorOdd,
+    spreadOdds,
+    probabilidad
   });
   
-  // Bonus si está en ambas casas principales
   score += bookmakers.scoreDisponibilidadPrincipal(disponibilidad);
   
-  recomendaciones.push({
-    evento,
-    equipo,
-    tipo,
-    deporte,
-    liga,
-    fechaEvento,
+  return {
+    evento, equipo, tipo, deporte, liga, fechaEvento,
     odds: mejorOdd,
     oddPromedio,
+    mejorBookmaker: mejorBookmaker?.title || mejorBookmaker?.bookmaker || 'N/A',
     probabilidad: (probabilidad * 100).toFixed(2),
     ev: (ev * 100).toFixed(2),
     kelly: (kelly * 100).toFixed(2),
     apuesta: apuestaInfo.cantidad,
-    moneda: moneda,
+    moneda,
     riesgoNivel: apuestaInfo.riesgo_nivel,
     gananciaSiGana: (apuestaInfo.cantidad * (mejorOdd - 1)).toFixed(2),
     pérdidaSiPierde: (-apuestaInfo.cantidad).toFixed(2),
     score: score.toFixed(0),
     diferencialOdds: (diferencialOdds * 100).toFixed(2),
     consensoCasas: oddsArray.length,
-    // Nuevos campos
+    fuenteProbabilidad: fuenteProb,
     disponibleEnPrincipales: disponibilidad.disponible,
     casasPrincipales: disponibilidad.casas,
     cantidadCasasPrincipales: disponibilidad.cantidad
-  });
+  };
 }
 
+// ─────────────────────────────────────────────
+// MEJORA #4: SCORING PRO
+// ─────────────────────────────────────────────
+
 /**
- * Helper - obtener nombre de liga
+ * Scoring mejorado - usa solo datos reales, sin campos fantasma
+ * 
+ * EV (0-30):           Edge matemático
+ * Sharp confirm (0-20): Pinnacle confirma la línea
+ * Diferencial (0-15):   Odds mejores vs mercado
+ * Consenso (0-15):      Cantidad de casas coinciden
+ * Spread bajo (0-10):   Mercado no disperso = más confiable
+ * Probabilidad (0-10):  Favoritos moderados > extremos
  */
+function calcularScorePro(datos) {
+  let score = 0;
+  
+  // EV (máx 30)
+  if (datos.ev > 0.08) score += 30;
+  else if (datos.ev > 0.05) score += 25;
+  else if (datos.ev > 0.03) score += 20;
+  else if (datos.ev > 0.02) score += 15;
+  
+  // Sharp confirmation (máx 20) - NUEVO
+  if (datos.tieneSharp) {
+    score += 20; // Pinnacle confirma = señal fuerte
+  }
+  
+  // Diferencial de odds vs mercado (máx 15)
+  if (datos.diferencialOdds > 0.10) score += 15;
+  else if (datos.diferencialOdds > 0.05) score += 10;
+  else if (datos.diferencialOdds > 0.02) score += 5;
+  
+  // Consenso - cantidad de casas (máx 15)
+  if (datos.consensoCasas >= 8) score += 15;
+  else if (datos.consensoCasas >= 5) score += 10;
+  else if (datos.consensoCasas >= 3) score += 5;
+  
+  // Spread bajo = mercado estable (máx 10) - NUEVO
+  if (datos.spreadOdds < 0.10) score += 10;
+  else if (datos.spreadOdds < 0.20) score += 5;
+  
+  // Probabilidad en rango óptimo 40-70% (máx 10) - NUEVO
+  if (datos.probabilidad >= 0.40 && datos.probabilidad <= 0.70) score += 10;
+  else if (datos.probabilidad >= 0.30 && datos.probabilidad <= 0.80) score += 5;
+  
+  return Math.min(100, score);
+}
+
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
+
 function obtenerLiga(sport) {
   const ligas = {
-    'soccer_epl': 'Premier League',
-    'soccer_spain_la_liga': 'La Liga',
-    'soccer_italy_serie_a': 'Serie A',
-    'soccer_germany_bundesliga': 'Bundesliga',
-    'soccer_france_ligue_one': 'Ligue 1',
-    'soccer_uefa_champs_league': 'Champions League',
-    'soccer_uefa_europa_league': 'Europa League',
-    'soccer_usa_mls': 'MLS',
-    'soccer_mexico_ligamx': 'Liga MX',
-    'soccer_brazil_campeonato': 'Brasileirão',
-    'soccer_efl_champ': 'EFL Championship',
-    'soccer_argentina_primera_division': 'Liga Argentina',
-    'soccer_portugal_primeira_liga': 'Primeira Liga',
-    'soccer_netherlands_eredivisie': 'Eredivisie',
-    'basketball_nba': 'NBA',
-    'basketball_euroleague': 'Euroleague',
-    'baseball_mlb': 'MLB'
+    'soccer_epl': 'Premier League', 'soccer_spain_la_liga': 'La Liga',
+    'soccer_italy_serie_a': 'Serie A', 'soccer_germany_bundesliga': 'Bundesliga',
+    'soccer_france_ligue_one': 'Ligue 1', 'soccer_uefa_champs_league': 'Champions League',
+    'soccer_uefa_europa_league': 'Europa League', 'soccer_usa_mls': 'MLS',
+    'soccer_mexico_ligamx': 'Liga MX', 'soccer_brazil_campeonato': 'Brasileirão',
+    'soccer_efl_champ': 'EFL Championship', 'soccer_argentina_primera_division': 'Liga Argentina',
+    'soccer_portugal_primeira_liga': 'Primeira Liga', 'soccer_netherlands_eredivisie': 'Eredivisie',
+    'basketball_nba': 'NBA', 'basketball_euroleague': 'Euroleague', 'baseball_mlb': 'MLB'
   };
-  // Para tennis, extraer nombre del torneo
   if (sport.includes('tennis')) {
     return sport.replace('tennis_atp_', 'ATP ').replace('tennis_wta_', 'WTA ')
       .replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -403,8 +508,4 @@ function obtenerLiga(sport) {
   return ligas[sport] || sport;
 }
 
-export default {
-  ejecutarBot,
-  obtenerOdds,
-  analizarOdds
-};
+export default { ejecutarBot };
