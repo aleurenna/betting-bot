@@ -80,10 +80,24 @@ export async function enviarTelegram(recomendaciones, bankroll = 20, moneda = 'U
     await enviarMensaje(header);
     await pausa();
 
-    // ── CADA APUESTA = 1 MENSAJE ──
+    // ── CADA APUESTA = 1 MENSAJE, agrupadas por fecha ──
+    let fechaAnterior = '';
+    
     for (let i = 0; i < recomendaciones.length; i++) {
       const ap = recomendaciones[i];
       totalApostar += parseFloat(ap.apuesta || 0);
+      
+      // Separador de fecha si cambia el día
+      const fechaEvento = ap.fechaEvento ? new Date(ap.fechaEvento) : null;
+      const diaEvento = fechaEvento 
+        ? fechaEvento.toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric', month: 'long' })
+        : '';
+      
+      if (diaEvento && diaEvento !== fechaAnterior) {
+        fechaAnterior = diaEvento;
+        await enviarMensaje(`📅 <b>${diaEvento.toUpperCase()}</b>`);
+        await pausa();
+      }
       
       const msg = formatearApuestaIndividual(ap, i + 1, simbolo, moneda);
       const ok = await enviarMensaje(msg);

@@ -113,10 +113,15 @@ export async function ejecutarBot() {
       }
     }
     
-    // Filtrar EV+ y score alto
+    // Filtrar EV+ y score alto, ordenar por fecha → score
     const buenasApuestas = recomendaciones
       .filter(r => r.ev > 0.02 && r.score > 50)
-      .sort((a, b) => b.score - a.score)
+      .sort((a, b) => {
+        const fechaA = new Date(a.fechaEvento).getTime();
+        const fechaB = new Date(b.fechaEvento).getTime();
+        if (fechaA !== fechaB) return fechaA - fechaB; // más pronto primero
+        return b.score - a.score; // mismo día: mejor score primero
+      })
       .slice(0, 10);
     
     console.log(`✅ Apuestas EV+ encontradas: ${buenasApuestas.length}`);
