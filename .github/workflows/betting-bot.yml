@@ -1,14 +1,15 @@
-name: Betting Bot - EV+ Analysis
+name: Betting Bot - EV+ Analysis v3
 
 on:
   schedule:
-    # 2 ejecuciones diarias (ahorra créditos: 8 créditos × 2 = 16/día × 30 = 480/500)
-    # 10am Costa Rica (16:00 UTC)
-    - cron: '0 16 * * *'
-    # 4pm Costa Rica (22:00 UTC)
-    - cron: '0 22 * * *'
+    # 3 ejecuciones diarias para mejor CLV tracking
+    # 8am Costa Rica (14:00 UTC)
+    - cron: '0 14 * * *'
+    # 1pm Costa Rica (19:00 UTC)
+    - cron: '0 19 * * *'
+    # 6pm Costa Rica (00:00 UTC día siguiente)
+    - cron: '0 0 * * *'
   
-  # Ejecución manual desde GitHub
   workflow_dispatch:
 
 jobs:
@@ -25,6 +26,23 @@ jobs:
         with:
           node-version: '18'
 
+      # ── PERSISTENCIA: Restaurar BD del cache ──
+      - name: Restore database
+        id: cache-db
+        uses: actions/cache/restore@v4
+        with:
+          path: bets.db
+          key: bets-db-dummy
+          restore-keys: bets-db-
+
+      - name: DB status
+        run: |
+          if [ -f bets.db ]; then
+            echo "✅ BD restaurada ($(wc -c < bets.db) bytes)"
+          else
+            echo "⚠️ BD nueva (primera ejecución)"
+          fi
+
       - name: Install dependencies
         run: npm install
 
@@ -39,6 +57,14 @@ jobs:
           REGIONS: 'eu,uk'
           NODE_ENV: 'production'
         run: node index.js --once
+
+      # ── PERSISTENCIA: Guardar BD al cache ──
+      - name: Save database
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: bets.db
+          key: bets-db-${{ github.run_id }}
 
       - name: Upload DB artifact
         if: always()
