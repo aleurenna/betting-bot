@@ -35,7 +35,6 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           BANKROLL_INICIAL: ${{ secrets.BANKROLL_INICIAL }}
           MONEDA: ${{ secrets.MONEDA }}
-          SPORTS: 'soccer_epl,soccer_la_liga,basketball_nba,tennis_atp'
           REGIONS: 'eu,us'
           NODE_ENV: 'production'
         run: node index.js --once
