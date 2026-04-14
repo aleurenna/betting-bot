@@ -12,6 +12,7 @@ import axios from 'axios';
 import * as calc from './calculos.js';
 import * as db from './database.js';
 import * as bookmakers from './bookmakers.js';
+import * as stats from './estadisticas.js';
 import { enviarTelegram } from './telegram.js';
 import dotenv from 'dotenv';
 
@@ -125,7 +126,41 @@ export async function ejecutarBot() {
       .slice(0, 10);
     
     console.log(`✅ Apuestas EV+ encontradas: ${buenasApuestas.length}`);
-    console.log(`💳 Créditos usados esta ejecución: ${creditosUsadosRun}`);
+    console.log(`💳 Créditos odds usados: ${creditosUsadosRun}`);
+    
+    // Enriquecer con estadísticas de API-Football (solo fútbol)
+    if (buenasApuestas.length > 0 && process.env.FOOTBALL_API_KEY) {
+      console.log('\n📊 Enriqueciendo con estadísticas...');
+      for (const apuesta of buenasApuestas) {
+        if (!stats.deporteSoportado(apuesta.deporte)) continue;
+        
+        // Extraer equipos del evento "TeamA vs TeamB"
+        const [homeTeam, awayTeam] = apuesta.evento.split(' vs ').map(s => s.trim());
+        if (!homeTeam || !awayTeam) continue;
+        
+        const estadisticas = await stats.obtenerEstadisticas(homeTeam, awayTeam, apuesta.equipo);
+        if (estadisticas) {
+          // Ajustar score con bonus de stats
+          const bonus = stats.calcularBonusStats(estadisticas);
+          const scoreAntes = parseInt(apuesta.score);
+          apuesta.score = Math.max(0, Math.min(100, scoreAntes + bonus)).toFixed(0);
+          apuesta.estadisticas = estadisticas;
+          
+          if (bonus !== 0) {
+            console.log(`   ${apuesta.equipo}: score ${scoreAntes} → ${apuesta.score} (${bonus > 0 ? '+' : ''}${bonus} stats)`);
+          }
+        }
+      }
+      console.log(`📊 Stats requests usados: ${stats.getRequestsUsados()}`);
+      
+      // Re-ordenar por score actualizado
+      buenasApuestas.sort((a, b) => {
+        const fechaA = new Date(a.fechaEvento).getTime();
+        const fechaB = new Date(b.fechaEvento).getTime();
+        if (fechaA !== fechaB) return fechaA - fechaB;
+        return parseInt(b.score) - parseInt(a.score);
+      });
+    }
     
     // Guardar en BD
     for (const apuesta of buenasApuestas) {

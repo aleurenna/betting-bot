@@ -5,6 +5,7 @@
 
 import axios from 'axios';
 import * as db from './database.js';
+import * as stats from './estadisticas.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -168,6 +169,12 @@ function formatearApuestaIndividual(ap, numero, simbolo, moneda) {
       .filter(c => c.nombre !== ap.mejorBookmaker)
       .map(c => c.nombre).join(', ');
     if (otras) msg += `📋 También en: ${otras}\n`;
+  }
+
+  // Estadísticas (API-Football)
+  if (ap.estadisticas) {
+    msg += `\n`;
+    msg += stats.formatearStatsTelegram(ap.estadisticas);
   }
   
   msg += `\n`;
