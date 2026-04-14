@@ -241,8 +241,8 @@ export async function obtenerMetricas() {
       perdidos: p,
       pendientes: pendientes?.n || 0,
       winRate: r > 0 ? (g / r) * 100 : 0,
-      avgEV: (avgEV?.avg || 0) * 100,
-      avgCLV: (avgCLV?.avg || 0) * 100,
+      avgEV: avgEV?.avg || 0,        // ya está en % en la BD
+      avgCLV: (avgCLV?.avg || 0) * 100, // CLV está en decimal (0.03 = 3%)
       roi: gananciaTotal?.total || 0,
       gananciaTotal: gananciaTotal?.total || 0
     };
