@@ -24,7 +24,7 @@ const PAUSA_MS = 350; // anti rate-limit
 // Cache de team IDs para no repetir búsquedas en la misma ejecución
 const teamCache = new Map();
 let requestsUsados = 0;
-const MAX_REQUESTS = 40; // límite por ejecución (de 100/día, dejamos margen)
+const MAX_REQUESTS = 25; // 25/run × 3 runs + tracking = ~90/100 diarios
 
 // ─────────────────────────────────────────────
 // HELPERS
@@ -74,18 +74,34 @@ async function buscarTeamId(teamName) {
   // Check cache
   if (teamCache.has(teamName)) return teamCache.get(teamName);
 
-  // Limpiar nombre para búsqueda
-  const searchName = teamName
-    .replace(/\s+(FC|CF|SC|AC|AS|SS|US|CD)$/i, '')
-    .replace(/^(FC|CF|SC|AC|AS|SS|US|CD)\s+/i, '')
+  // Normalizar nombre para búsqueda
+  // The Odds API usa nombres cortos, API-Football usa nombres completos
+  const aliases = {
+    'man city': 'manchester city', 'man utd': 'manchester united',
+    'man united': 'manchester united', 'spurs': 'tottenham',
+    'wolves': 'wolverhampton', 'newcastle': 'newcastle united',
+    'west ham': 'west ham united', 'nottm forest': 'nottingham forest',
+    'nott\'m forest': 'nottingham forest', 'athletic bilbao': 'athletic club',
+    'atletico madrid': 'atletico de madrid', 'inter': 'internazionale',
+    'inter milan': 'internazionale', 'ac milan': 'milan',
+    'bayern munich': 'bayern', 'psg': 'paris saint germain',
+    'rb leipzig': 'rasen ballsport leipzig', 'la galaxy': 'los angeles galaxy',
+    'ny red bulls': 'new york red bulls'
+  };
+
+  const lowerName = teamName.toLowerCase().trim();
+  const searchName = aliases[lowerName] || teamName
+    .replace(/\s+(FC|CF|SC|AC|AS|SS|US|CD|SL)$/i, '')
+    .replace(/^(FC|CF|SC|AC|AS|SS|US|CD|SL)\s+/i, '')
     .trim();
 
   const data = await apiCall('teams', { search: searchName });
   
   if (data && data.length > 0) {
-    // Buscar match exacto primero, luego parcial
+    // Match exacto primero, luego parcial
     const exacto = data.find(t => 
-      t.team.name.toLowerCase() === teamName.toLowerCase()
+      t.team.name.toLowerCase() === teamName.toLowerCase() ||
+      t.team.name.toLowerCase() === searchName.toLowerCase()
     );
     const team = exacto || data[0];
     
@@ -94,6 +110,20 @@ async function buscarTeamId(teamName) {
     return result;
   }
 
+  // Si no encontró, intentar con nombre más corto (primera palabra significativa)
+  if (searchName.includes(' ')) {
+    const palabras = searchName.split(' ').filter(p => p.length > 3);
+    if (palabras.length > 0) {
+      const data2 = await apiCall('teams', { search: palabras[0] });
+      if (data2 && data2.length > 0) {
+        const result = { id: data2[0].team.id, name: data2[0].team.name };
+        teamCache.set(teamName, result);
+        return result;
+      }
+    }
+  }
+
+  console.log(`   ⚠️ Equipo no encontrado: "${teamName}"`);
   teamCache.set(teamName, null);
   return null;
 }

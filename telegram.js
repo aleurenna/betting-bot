@@ -106,11 +106,21 @@ export async function enviarTelegram(recomendaciones, bankroll = 20, moneda = 'U
       await pausa();
     }
 
-    // ── RESUMEN FINAL ──
+    // ── RESUMEN FINAL + MÉTRICAS ──
     let resumen = `<b>📋 RESUMEN</b>\n`;
     resumen += `💳 Total a apostar: ${simbolo}${totalApostar.toFixed(2)}\n`;
     resumen += `📊 % bankroll: ${((totalApostar / bankroll) * 100).toFixed(1)}%\n`;
     resumen += `📈 Apuestas: ${recomendaciones.length} | Kelly 25%\n`;
+    
+    // Agregar métricas si hay historial
+    try {
+      const tracking = (await import('./tracking.js'));
+      const metricas = await tracking.calcularMetricas();
+      if (metricas && metricas.totalPicks > 5) {
+        resumen += tracking.formatearMetricasTelegram(metricas);
+      }
+    } catch (e) { /* sin métricas aún */ }
+    
     resumen += `\n⚠️ Apuesta responsablemente`;
 
     await enviarMensaje(resumen);

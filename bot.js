@@ -47,6 +47,11 @@ const PREFERRED_SPORTS = [
   'baseball_mlb'
 ];
 
+// Filtros de calidad
+const ODDS_MIN = parseFloat(process.env.ODDS_MIN || '1.80');
+const ODDS_MAX = parseFloat(process.env.ODDS_MAX || '7.00');
+const MIN_BOOKMAKERS = parseInt(process.env.MIN_BOOKMAKERS || '8');
+
 // Regiones: eu (1xBet, Betfair, Pinnacle), uk (Betway, Betfair)
 const REGIONS_STRING = process.env.REGIONS || 'eu,uk';
 
@@ -84,10 +89,9 @@ export async function ejecutarBot() {
     console.log(`📋 Eventos recientes (anti-duplicados): ${eventosRecientes.length}`);
     
     let recomendaciones = [];
+    let todosLosOdds = []; // Para CLV tracking
     
-    // MEJORA #1: Una sola llamada por deporte con todas las regiones
     for (const sport of SPORTS) {
-      // MEJORA #3: Verificar presupuesto de créditos
       if (creditosUsadosRun >= MAX_CREDITOS_RUN) {
         console.log(`🔒 Límite de créditos alcanzado (${creditosUsadosRun}/${MAX_CREDITOS_RUN}). Deteniendo.`);
         break;
@@ -97,6 +101,8 @@ export async function ejecutarBot() {
         const odds = await obtenerOdds(sport);
         
         if (odds && odds.length > 0) {
+          todosLosOdds = [...todosLosOdds, ...odds];
+          
           const oddsNoRepetidos = odds.filter(evento => {
             return !eventosRecientes.some(prev => 
               prev.evento === `${evento.home_team} vs ${evento.away_team}` &&
@@ -175,6 +181,7 @@ export async function ejecutarBot() {
         ev: apuesta.ev,
         kelly: apuesta.kelly,
         score: apuesta.score,
+        bookmaker: apuesta.mejorBookmaker,
         fechaEvento: apuesta.fechaEvento
       });
     }
@@ -183,7 +190,8 @@ export async function ejecutarBot() {
       await enviarTelegram(buenasApuestas, bankroll, moneda);
     }
     
-    return buenasApuestas;
+    // Retornar picks + odds raw (para CLV tracking en index.js)
+    return { picks: buenasApuestas, oddsData: todosLosOdds };
     
   } catch (error) {
     console.error('❌ Error en bot:', error);
@@ -409,6 +417,10 @@ function analizarOutcome(data, bankroll, moneda) {
   
   // Si ninguna de mis casas tiene este evento, skip
   if (!miMejorOdd) return null;
+  
+  // FILTROS DE CALIDAD
+  if (miMejorOdd.odds < ODDS_MIN || miMejorOdd.odds > ODDS_MAX) return null;
+  if (oddsArray.length < MIN_BOOKMAKERS) return null;
   
   // Mejor odds del mercado general (para referencia)
   const mejorOddMercado = Math.max(...oddsArray);
