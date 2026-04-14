@@ -13,8 +13,33 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
-const SPORTS = ['soccer_epl', 'soccer_la_liga', 'basketball_nba', 'tennis_atp'];
-const REGIONS = ['eu', 'au'];
+
+// Deportes disponibles según The Odds API - EXPANDIDOS
+const SPORTS = [
+  // FÚTBOL - Ligas Principales
+  'soccer_epl',        // Premier League (Inglaterra)
+  'soccer_la_liga',    // La Liga (España)
+  'soccer_serie_a',    // Serie A (Italia)
+  'soccer_bundesliga', // Bundesliga (Alemania)
+  'soccer_ligue_1',    // Ligue 1 (Francia)
+  
+  // BASKETBALL
+  'basketball_nba',       // NBA (USA)
+  'basketball_euroleague', // Euroleague (Europa)
+  
+  // TENNIS
+  'tennis_atp',        // ATP (Hombres)
+  'tennis_wta'         // WTA (Mujeres)
+];
+
+// Regiones disponibles según The Odds API - TODAS LAS OPCIONES
+const REGIONS = [
+  'us',  // United States (DraftKings, FanDuel, Bet365, BetMGM)
+  'uk',  // United Kingdom (Sky Bet, Ladbrokes, William Hill, Betfred)
+  'eu',  // Europa (Betfair, Unibet, Bwin, 888sport, Pinnacle)
+  'au'   // Australia (Sportsbet, TAB, Neds, Ladbrokes)
+];
+
 const MARKETS = ['h2h'];
 
 let creditosRestantes = 500; // Simulado - obtener del header real
@@ -281,10 +306,20 @@ function analizarOutcome(data, recomendaciones, bankroll, moneda) {
  */
 function obtenerLiga(sport) {
   const ligas = {
-    'soccer_epl': 'EPL',
+    // Fútbol
+    'soccer_epl': 'Premier League',
     'soccer_la_liga': 'La Liga',
+    'soccer_serie_a': 'Serie A',
+    'soccer_bundesliga': 'Bundesliga',
+    'soccer_ligue_1': 'Ligue 1',
+    
+    // Basketball
     'basketball_nba': 'NBA',
-    'tennis_atp': 'ATP'
+    'basketball_euroleague': 'Euroleague',
+    
+    // Tennis
+    'tennis_atp': 'ATP',
+    'tennis_wta': 'WTA'
   };
   return ligas[sport] || sport;
 }
