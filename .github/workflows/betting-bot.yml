@@ -54,6 +54,8 @@ jobs:
           BANKROLL_INICIAL: ${{ secrets.BANKROLL_INICIAL }}
           MONEDA: ${{ secrets.MONEDA }}
           FOOTBALL_API_KEY: ${{ secrets.FOOTBALL_API_KEY }}
+          GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
           REGIONS: 'eu,uk'
           NODE_ENV: 'production'
         run: node index.js --once
