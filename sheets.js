@@ -92,7 +92,20 @@ async function inicializarHoja() {
         }
       });
 
-      console.log('✅ Sheets: hoja PICKS creada');
+      // Fórmulas ARRAYFORMULA para Ganancia y CLV (se auto-extienden)
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${HOJA_PICKS}!Q2:R2`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: {
+          values: [[
+            '=ARRAYFORMULA(IF(P2:P="ganada",O2:O*(H2:H-1),IF(P2:P="perdida",-O2:O,"")))',
+            '=ARRAYFORMULA(IF(I2:I="","",(H2:H/I2:I)-1))'
+          ]]
+        }
+      });
+
+      console.log('✅ Sheets: hoja PICKS creada con fórmulas');
     }
 
     // Crear hoja METRICAS si no existe
@@ -104,14 +117,30 @@ async function inicializarHoja() {
         }
       });
 
+      // Fórmulas auto-calculadas (usa "ganada"/"perdida" que es lo que escribe el bot)
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
-        range: `${HOJA_METRICAS}!A1:B1`,
+        range: `${HOJA_METRICAS}!A1:B12`,
         valueInputOption: 'USER_ENTERED',
         requestBody: {
-          values: [['Métrica', 'Valor']]
+          values: [
+            ['Métrica', 'Valor'],
+            ['Total Picks', '=COUNTA(PICKS!A2:A)'],
+            ['Resueltos', '=COUNTIF(PICKS!P2:P,"<>")'],
+            ['Ganados', '=COUNTIF(PICKS!P2:P,"ganada")'],
+            ['Perdidos', '=COUNTIF(PICKS!P2:P,"perdida")'],
+            ['Pendientes', '=COUNTIFS(PICKS!A2:A,"<>",PICKS!P2:P,"")'],
+            ['Win Rate %', '=IFERROR(COUNTIF(PICKS!P2:P,"ganada")/COUNTIF(PICKS!P2:P,"<>"),0)'],
+            ['EV Promedio %', '=IFERROR(AVERAGE(PICKS!J2:J),0)'],
+            ['CLV Promedio %', '=IFERROR(AVERAGE(PICKS!R2:R),0)'],
+            ['ROI', '=IFERROR(SUM(PICKS!Q2:Q)/SUM(PICKS!O2:O),0)'],
+            ['Ganancia Total', '=SUM(PICKS!Q2:Q)'],
+            ['Última actualización', '=NOW()']
+          ]
         }
       });
+
+      console.log('✅ Sheets: hoja METRICAS creada con fórmulas');
     }
 
     return true;
@@ -154,8 +183,7 @@ export async function guardarPickEnSheets(pick) {
       ? new Date(pick.fechaEvento).toLocaleString('es-CR')
       : '';
 
-    // Fila de datos (columnas A-N llenadas por el bot)
-    // Columnas O-R se llenan después (resultado, ganancia, CLV)
+    // Solo columnas A-P. Q (Ganancia) y R (CLV) los maneja ARRAYFORMULA
     const fila = [
       ahora,                                          // A: Fecha registro
       fechaEvento,                                     // B: Fecha evento
@@ -172,42 +200,16 @@ export async function guardarPickEnSheets(pick) {
       parseInt(pick.score) || 0,                       // M: Score
       pick.mejorBookmaker || pick.bookmaker || '',      // N: Casa
       parseFloat(pick.apuesta) || 0,                   // O: Stake
-      '',                                              // P: Resultado (se llena después)
-      '',                                              // Q: Ganancia (fórmula)
-      ''                                               // R: CLV % (se llena después)
+      ''                                               // P: Resultado (manual)
     ];
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${HOJA_PICKS}!A:R`,
+      range: `${HOJA_PICKS}!A:P`,  // Solo hasta P, no tocar Q ni R
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [fila] }
     });
-
-    // Agregar fórmula de ganancia en la última fila
-    const totalFilas = await contarFilas();
-    if (totalFilas > 1) {
-      // Q = SI(P="ganada", O*(H-1), SI(P="perdida", -O, ""))
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `${HOJA_PICKS}!Q${totalFilas}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: {
-          values: [[`=IF(P${totalFilas}="ganada",O${totalFilas}*(H${totalFilas}-1),IF(P${totalFilas}="perdida",-O${totalFilas},""))`]]
-        }
-      });
-
-      // R = CLV = (H/I)-1 (si I tiene valor)
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `${HOJA_PICKS}!R${totalFilas}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: {
-          values: [[`=IF(I${totalFilas}<>"", (H${totalFilas}/I${totalFilas})-1, "")`]]
-        }
-      });
-    }
 
     return true;
   } catch (error) {
@@ -281,28 +283,10 @@ export async function actualizarMetricasEnSheets(metricas) {
   if (!sheets || !metricas) return;
 
   try {
-    await inicializarHoja(); // Asegurar que la hoja existe
-    
-    const datos = [
-      ['Métrica', 'Valor'],
-      ['Total Picks', metricas.totalPicks],
-      ['Resueltos', metricas.resueltos],
-      ['Ganados', metricas.ganados],
-      ['Perdidos', metricas.perdidos],
-      ['Pendientes', metricas.pendientes],
-      ['Win Rate %', metricas.winRate],
-      ['EV Promedio %', metricas.avgEV],
-      ['CLV Promedio %', metricas.avgCLV],
-      ['ROI', metricas.roi],
-      ['Última actualización', new Date().toLocaleString('es-CR')]
-    ];
-
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${HOJA_METRICAS}!A1:B${datos.length}`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: datos }
-    });
+    // Solo asegurar que la hoja existe con fórmulas
+    // Las fórmulas se auto-calculan, no sobrescribir
+    await inicializarHoja();
+    console.log('📊 Sheets: métricas auto-calculadas por fórmulas');
   } catch (error) {
     console.error('❌ Sheets métricas error:', error.message);
   }
