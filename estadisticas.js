@@ -17,9 +17,17 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const API_KEY = process.env.FOOTBALL_API_KEY;
+// Sanitizar key — GitHub secrets puede agregar caracteres invisibles
+const RAW_KEY = process.env.FOOTBALL_API_KEY || '';
+const API_KEY = RAW_KEY.replace(/[^a-zA-Z0-9]/g, '') || null;
 const BASE_URL = 'https://v3.football.api-sports.io';
-const PAUSA_MS = 350; // anti rate-limit
+const PAUSA_MS = 350;
+
+if (API_KEY) {
+  console.log(`📊 Football API: key loaded (${API_KEY.length} chars, raw was ${RAW_KEY.length})`);
+} else {
+  console.log('📊 Football API: no key configured');
+}
 
 // Cache de team IDs para no repetir búsquedas en la misma ejecución
 const teamCache = new Map();

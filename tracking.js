@@ -13,7 +13,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const FOOTBALL_API_KEY = process.env.FOOTBALL_API_KEY;
+const FOOTBALL_API_KEY = (process.env.FOOTBALL_API_KEY || '').replace(/[^a-zA-Z0-9]/g, '') || null;
 const FOOTBALL_URL = 'https://v3.football.api-sports.io';
 
 // ─────────────────────────────────────────────
