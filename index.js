@@ -15,6 +15,7 @@ import * as botMain from './bot.js';
 import * as tracking from './tracking.js';
 import * as telegramModule from './telegram.js';
 import * as dbModule from './database.js';
+import * as sheets from './sheets.js';
 import cron from 'node-cron';
 import dotenv from 'dotenv';
 
@@ -67,6 +68,9 @@ async function executeAnalysis() {
       console.log(`   CLV promedio: ${metricas.avgCLV >= 0 ? '+' : ''}${metricas.avgCLV.toFixed(2)}%`);
       console.log(`   EV promedio: +${metricas.avgEV.toFixed(2)}%`);
       console.log(`   Pendientes: ${metricas.pendientes}`);
+      
+      // Actualizar métricas en Google Sheets
+      await sheets.actualizarMetricasEnSheets(metricas);
     }
 
     // Resultado del análisis

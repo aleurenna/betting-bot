@@ -13,6 +13,7 @@ import * as calc from './calculos.js';
 import * as db from './database.js';
 import * as bookmakers from './bookmakers.js';
 import * as stats from './estadisticas.js';
+import * as sheets from './sheets.js';
 import { enviarTelegram } from './telegram.js';
 import dotenv from 'dotenv';
 
@@ -188,6 +189,9 @@ export async function ejecutarBot() {
     
     if (buenasApuestas.length > 0) {
       await enviarTelegram(buenasApuestas, bankroll, moneda);
+      
+      // Guardar en Google Sheets
+      await sheets.guardarPicksEnSheets(buenasApuestas);
     }
     
     // Retornar picks + odds raw (para CLV tracking en index.js)
