@@ -281,6 +281,8 @@ export async function actualizarMetricasEnSheets(metricas) {
   if (!sheets || !metricas) return;
 
   try {
+    await inicializarHoja(); // Asegurar que la hoja existe
+    
     const datos = [
       ['Métrica', 'Valor'],
       ['Total Picks', metricas.totalPicks],
