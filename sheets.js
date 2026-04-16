@@ -92,20 +92,7 @@ async function inicializarHoja() {
         }
       });
 
-      // Fórmulas ARRAYFORMULA para Ganancia y CLV (se auto-extienden)
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `${HOJA_PICKS}!Q2:R2`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: {
-          values: [[
-            '=ARRAYFORMULA(IF(P2:P="ganada",O2:O*(H2:H-1),IF(P2:P="perdida",-O2:O,"")))',
-            '=ARRAYFORMULA(IF(I2:I="","",(H2:H/I2:I)-1))'
-          ]]
-        }
-      });
-
-      console.log('✅ Sheets: hoja PICKS creada con fórmulas');
+      console.log('✅ Sheets: hoja PICKS creada');
     }
 
     // Crear hoja METRICAS si no existe
@@ -117,7 +104,7 @@ async function inicializarHoja() {
         }
       });
 
-      // Fórmulas auto-calculadas (usa "ganada"/"perdida" que es lo que escribe el bot)
+      // Fórmulas auto-calculadas (usa "W"/"L" para resultado)
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
         range: `${HOJA_METRICAS}!A1:B12`,
@@ -127,10 +114,10 @@ async function inicializarHoja() {
             ['Métrica', 'Valor'],
             ['Total Picks', '=COUNTA(PICKS!A2:A)'],
             ['Resueltos', '=COUNTIF(PICKS!P2:P,"<>")'],
-            ['Ganados', '=COUNTIF(PICKS!P2:P,"ganada")'],
-            ['Perdidos', '=COUNTIF(PICKS!P2:P,"perdida")'],
+            ['Ganados', '=COUNTIF(PICKS!P2:P,"W")'],
+            ['Perdidos', '=COUNTIF(PICKS!P2:P,"L")'],
             ['Pendientes', '=COUNTIFS(PICKS!A2:A,"<>",PICKS!P2:P,"")'],
-            ['Win Rate %', '=IFERROR(COUNTIF(PICKS!P2:P,"ganada")/COUNTIF(PICKS!P2:P,"<>"),0)'],
+            ['Win Rate %', '=IFERROR(COUNTIF(PICKS!P2:P,"W")/COUNTIF(PICKS!P2:P,"<>"),0)'],
             ['EV Promedio %', '=IFERROR(AVERAGE(PICKS!J2:J),0)'],
             ['CLV Promedio %', '=IFERROR(AVERAGE(PICKS!R2:R),0)'],
             ['ROI', '=IFERROR(SUM(PICKS!Q2:Q)/SUM(PICKS!O2:O),0)'],
@@ -166,7 +153,7 @@ export async function guardarPickEnSheets(pick) {
     // Verificar duplicados
     const existing = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${HOJA_PICKS}!E:F`  // Evento + Pick
+      range: `${HOJA_PICKS}!E:F`
     });
 
     const filas = existing.data.values || [];
@@ -174,18 +161,20 @@ export async function guardarPickEnSheets(pick) {
       fila[0] === pick.evento && fila[1] === pick.equipo
     );
 
-    if (yaExiste) {
-      return false; // No duplicar
-    }
+    if (yaExiste) return false;
+
+    // Saber en qué fila va a caer el nuevo pick
+    const totalActual = await contarFilas();
+    const nuevaFila = totalActual + 1; // siguiente fila disponible
 
     const ahora = new Date().toLocaleString('es-CR');
     const fechaEvento = pick.fechaEvento
       ? new Date(pick.fechaEvento).toLocaleString('es-CR')
       : '';
 
-    // Solo columnas A-P. Q (Ganancia) y R (CLV) los maneja ARRAYFORMULA
+    // Fila completa A-R con fórmulas individuales en Q y R
     const fila = [
-      ahora,                                          // A: Fecha registro
+      ahora,                                          // A: Fecha
       fechaEvento,                                     // B: Fecha evento
       pick.liga || '',                                 // C: Liga
       pick.deporte || '',                              // D: Deporte
@@ -193,21 +182,23 @@ export async function guardarPickEnSheets(pick) {
       pick.equipo || '',                               // F: Pick
       pick.tipo || '',                                 // G: Tipo
       parseFloat(pick.odds) || 0,                      // H: Odds Open
-      '',                                              // I: Odds Close (se llena después)
+      '',                                              // I: Odds Close
       parseFloat(pick.ev) || 0,                        // J: EV %
       parseFloat(pick.probabilidad) || 0,              // K: Prob %
       parseFloat(pick.kelly) || 0,                     // L: Kelly %
       parseInt(pick.score) || 0,                       // M: Score
       pick.mejorBookmaker || pick.bookmaker || '',      // N: Casa
       parseFloat(pick.apuesta) || 0,                   // O: Stake
-      ''                                               // P: Resultado (manual)
+      '',                                              // P: Resultado (manual: W o L)
+      `=IF(P${nuevaFila}="W",O${nuevaFila}*(H${nuevaFila}-1),IF(P${nuevaFila}="L",-O${nuevaFila},""))`,  // Q: Ganancia
+      `=IF(I${nuevaFila}="","",(H${nuevaFila}/I${nuevaFila})-1)`                                          // R: CLV %
     ];
 
-    await sheets.spreadsheets.values.append({
+    // Escribir directamente en la fila exacta (no INSERT_ROWS)
+    await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${HOJA_PICKS}!A:P`,  // Solo hasta P, no tocar Q ni R
+      range: `${HOJA_PICKS}!A${nuevaFila}:R${nuevaFila}`,
       valueInputOption: 'USER_ENTERED',
-      insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [fila] }
     });
 

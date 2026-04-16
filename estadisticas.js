@@ -141,16 +141,20 @@ async function buscarTeamId(teamName) {
 // ─────────────────────────────────────────────
 
 async function obtenerH2H(team1Id, team2Id) {
+  // Free plan no soporta 'last', solo h2h + status
   const data = await apiCall('fixtures/headtohead', {
     h2h: `${team1Id}-${team2Id}`,
-    last: 10
+    status: 'FT-AET-PEN'
   });
 
   if (!data || data.length === 0) return null;
 
+  // Tomar solo los últimos 10 partidos
+  const ultimos = data.slice(-10);
+
   let wins1 = 0, wins2 = 0, draws = 0;
 
-  data.forEach(match => {
+  ultimos.forEach(match => {
     const homeId = match.teams.home.id;
     const homeGoals = match.goals.home;
     const awayGoals = match.goals.away;
@@ -167,7 +171,7 @@ async function obtenerH2H(team1Id, team2Id) {
   });
 
   return {
-    partidos: data.length,
+    partidos: ultimos.length,
     wins1, wins2, draws,
     dominante: wins1 > wins2 ? 'team1' : wins2 > wins1 ? 'team2' : 'parejo'
   };
@@ -178,19 +182,26 @@ async function obtenerH2H(team1Id, team2Id) {
 // ─────────────────────────────────────────────
 
 async function obtenerForma(teamId) {
-  // Buscar últimos 5 partidos finalizados del equipo
+  // Free plan no soporta 'last'. Usar season + status
+  const year = new Date().getFullYear();
+  const season = new Date().getMonth() >= 6 ? year : year - 1; // Temporadas empiezan ~julio
+  
   const data = await apiCall('fixtures', {
     team: teamId,
-    last: 5
+    season: season,
+    status: 'FT-AET-PEN'
   });
 
   if (!data || data.length === 0) return null;
+
+  // Tomar últimos 5 partidos
+  const ultimos = data.slice(-5);
 
   let wins = 0, draws = 0, losses = 0;
   let golesAFavor = 0, golesEnContra = 0;
   const forma = [];
 
-  data.forEach(match => {
+  ultimos.forEach(match => {
     const esHome = match.teams.home.id === teamId;
     const golesEquipo = esHome ? match.goals.home : match.goals.away;
     const golesRival = esHome ? match.goals.away : match.goals.home;
@@ -204,11 +215,11 @@ async function obtenerForma(teamId) {
   });
 
   return {
-    ultimos5: forma.join(''),  // ej: "WWDLW"
+    ultimos5: forma.join(''),
     wins, draws, losses,
     golesAFavor, golesEnContra,
-    winRate: (wins / data.length * 100).toFixed(0),
-    promedioGoles: (golesAFavor / data.length).toFixed(1)
+    winRate: (wins / ultimos.length * 100).toFixed(0),
+    promedioGoles: (golesAFavor / ultimos.length).toFixed(1)
   };
 }
 

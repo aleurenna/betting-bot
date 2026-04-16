@@ -212,10 +212,10 @@ export async function obtenerMetricas() {
       `SELECT COUNT(*) as n FROM predicciones WHERE estado = 'finalizado'`
     );
     const ganados = await db.get(
-      `SELECT COUNT(*) as n FROM predicciones WHERE resultado = 'ganada'`
+      `SELECT COUNT(*) as n FROM predicciones WHERE resultado = 'W'`
     );
     const perdidos = await db.get(
-      `SELECT COUNT(*) as n FROM predicciones WHERE resultado = 'perdida'`
+      `SELECT COUNT(*) as n FROM predicciones WHERE resultado = 'L'`
     );
     const pendientes = await db.get(
       `SELECT COUNT(*) as n FROM predicciones WHERE estado = 'pendiente'`
@@ -262,7 +262,7 @@ export async function obtenerMetricasPorLiga() {
         liga,
         COUNT(*) as picks,
         AVG(clv) as avg_clv,
-        SUM(CASE WHEN resultado = 'ganada' THEN 1 ELSE 0 END) as ganadas,
+        SUM(CASE WHEN resultado = 'W' THEN 1 ELSE 0 END) as ganadas,
         SUM(ganancia_perdida) as ganancia
        FROM predicciones
        WHERE estado = 'finalizado'

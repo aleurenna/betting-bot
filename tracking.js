@@ -159,23 +159,23 @@ export async function verificarResultados() {
           const esHome = pick.evento.startsWith(apuesta) || homeTeam.includes(apuesta);
 
           if (apuesta === 'Draw') {
-            resultado = homeGoals === awayGoals ? 'ganada' : 'perdida';
+            resultado = homeGoals === awayGoals ? 'W' : 'L';
           } else if (esHome) {
-            resultado = homeGoals > awayGoals ? 'ganada' : 'perdida';
+            resultado = homeGoals > awayGoals ? 'W' : 'L';
           } else {
-            resultado = awayGoals > homeGoals ? 'ganada' : 'perdida';
+            resultado = awayGoals > homeGoals ? 'W' : 'L';
           }
 
           // Calcular ganancia/pérdida
           const stake = pick.odds; // odds guardadas = opening odds
-          const ganancia = resultado === 'ganada'
+          const ganancia = resultado === 'W'
             ? pick.kelly_percentage * (pick.odds - 1) // Ganancia estimada
             : -pick.kelly_percentage;
 
           await db.actualizarResultado(pick.id, resultado, ganancia);
           resueltos++;
 
-          const emoji = resultado === 'ganada' ? '✅' : '❌';
+          const emoji = resultado === 'W' ? '✅' : '❌';
           console.log(`   ${emoji} ${pick.evento}: ${apuesta} → ${resultado} (${homeGoals}-${awayGoals})`);
         }
 
