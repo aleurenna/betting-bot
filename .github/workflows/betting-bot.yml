@@ -2,13 +2,11 @@ name: Betting Bot - EV+ Analysis v3
 
 on:
   schedule:
-    # 3 ejecuciones diarias para mejor CLV tracking
-    # 8am Costa Rica (14:00 UTC)
-    - cron: '0 14 * * *'
-    # 1pm Costa Rica (19:00 UTC)
-    - cron: '0 19 * * *'
-    # 6pm Costa Rica (00:00 UTC día siguiente)
-    - cron: '0 0 * * *'
+    # 2 ejecuciones diarias (8 créditos/run × 2 = 16/día × 30 = 480/500)
+    # 9am Costa Rica (15:00 UTC)
+    - cron: '0 15 * * *'
+    # 4pm Costa Rica (22:00 UTC)
+    - cron: '0 22 * * *'
   
   workflow_dispatch:
 
@@ -56,7 +54,7 @@ jobs:
           FOOTBALL_API_KEY: ${{ secrets.FOOTBALL_API_KEY }}
           GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
-          REGIONS: 'eu,uk'
+          REGIONS: 'eu'
           NODE_ENV: 'production'
         run: node index.js --once
 
