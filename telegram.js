@@ -6,6 +6,7 @@
 import axios from 'axios';
 import * as db from './database.js';
 import * as stats from './estadisticas.js';
+import * as steam from './steam.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -185,17 +186,23 @@ function formatearApuestaIndividual(ap, numero, simbolo, moneda) {
   if (ap.estadisticas) {
     msg += `\n`;
     msg += stats.formatearStatsTelegram(ap.estadisticas);
+    msg += `✅ <b>Validado con estadísticas</b>\n`;
+  }
+  
+  // Steam detection
+  if (ap.steam && ap.steam.steam) {
+    msg += steam.formatearSteamTelegram(ap.steam);
   }
   
   msg += `\n`;
 
-  // Apuesta recomendada (la parte más importante)
+  // Apuesta recomendada
   msg += `💵 <b>Apostar: ${simbolo}${ap.apuesta.toFixed(2)} ${moneda}</b> ${riesgo}\n`;
   msg += `   ✅ Ganas: +${simbolo}${parseFloat(ap.gananciaSiGana).toFixed(2)}\n`;
   msg += `   ❌ Pierdes: -${simbolo}${Math.abs(parseFloat(ap.pérdidaSiPierde)).toFixed(2)}\n`;
   msg += `\n`;
 
-  // Confianza y razones
+  // Confianza
   msg += `💪 ${confianza} (Score: ${ap.score}/100)\n`;
   msg += generarExplicacion(ap);
 
