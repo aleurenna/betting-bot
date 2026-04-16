@@ -140,8 +140,7 @@ async function buscarTeamId(teamName) {
 // H2H - HEAD TO HEAD
 // ─────────────────────────────────────────────
 
-async function obtenerH2H(team1Id, team2Id) {
-  // Free plan no soporta 'last', solo h2h + status
+async function obtenerH2H(team1Id, team2Id, team1Name, team2Name) {
   const data = await apiCall('fixtures/headtohead', {
     h2h: `${team1Id}-${team2Id}`,
     status: 'FT-AET-PEN'
@@ -149,7 +148,6 @@ async function obtenerH2H(team1Id, team2Id) {
 
   if (!data || data.length === 0) return null;
 
-  // Tomar solo los últimos 10 partidos
   const ultimos = data.slice(-10);
 
   let wins1 = 0, wins2 = 0, draws = 0;
@@ -173,6 +171,8 @@ async function obtenerH2H(team1Id, team2Id) {
   return {
     partidos: ultimos.length,
     wins1, wins2, draws,
+    team1Name: team1Name || 'Local',
+    team2Name: team2Name || 'Visitante',
     dominante: wins1 > wins2 ? 'team1' : wins2 > wins1 ? 'team2' : 'parejo'
   };
 }
@@ -257,16 +257,15 @@ export async function obtenerEstadisticas(homeTeam, awayTeam, equipoApuesta) {
     }
 
     // 3. H2H entre ambos equipos (1 call)
-    const h2h = await obtenerH2H(home.id, away.id);
-
-    // Total: ~4 calls por evento
+    const h2h = await obtenerH2H(home.id, away.id, homeTeam, awayTeam);
 
     // Construir resumen
     const stats = {
       disponible: true,
+      equipoApuesta,
       forma: formaEquipo,
       h2h,
-      resumen: construirResumen(formaEquipo, h2h, equipoApuesta, homeTeam)
+      resumen: construirResumen(formaEquipo, h2h, equipoApuesta, homeTeam, awayTeam)
     };
 
     return stats;
@@ -300,15 +299,19 @@ export function calcularBonusStats(stats) {
 
   // H2H (máx +10)
   if (stats.h2h) {
-    if (stats.h2h.dominante === 'team1') {
-      // El equipo apostado domina el H2H
+    if (stats.equipoApuesta === 'Draw') {
+      // Para Draw: muchos empates en H2H = bonus
+      const drawRatio = stats.h2h.draws / stats.h2h.partidos;
+      if (drawRatio >= 0.3) bonus += 10;      // 30%+ empates
+      else if (drawRatio >= 0.2) bonus += 5;  // 20%+ empates
+      else if (drawRatio === 0) bonus -= 5;   // 0 empates = malo
+    } else if (stats.h2h.dominante === 'team1') {
       const ratio = stats.h2h.wins1 / stats.h2h.partidos;
       if (ratio >= 0.6) bonus += 10;
       else if (ratio >= 0.4) bonus += 5;
     } else if (stats.h2h.dominante === 'team2') {
-      // El rival domina
       const ratio = stats.h2h.wins2 / stats.h2h.partidos;
-      if (ratio >= 0.6) bonus -= 10;  // Penalizar fuerte
+      if (ratio >= 0.6) bonus -= 10;
       else if (ratio >= 0.4) bonus -= 5;
     }
   }
@@ -320,20 +323,31 @@ export function calcularBonusStats(stats) {
 // FORMATO PARA TELEGRAM
 // ─────────────────────────────────────────────
 
-function construirResumen(forma, h2h, equipoApuesta, homeTeam) {
+function construirResumen(forma, h2h, equipoApuesta, homeTeam, awayTeam) {
   const lineas = [];
 
+  // Forma reciente (solo para picks de equipo, no Draw)
   if (forma) {
     const emoji = parseInt(forma.winRate) >= 60 ? '🟢' : parseInt(forma.winRate) >= 40 ? '🟡' : '🔴';
-    lineas.push(`${emoji} Forma: ${forma.ultimos5} (${forma.winRate}% wins)`);
+    lineas.push(`${emoji} Forma ${equipoApuesta}: ${forma.ultimos5} (${forma.winRate}% wins)`);
     lineas.push(`⚽ Goles: ${forma.golesAFavor} a favor, ${forma.golesEnContra} en contra`);
   }
 
+  // H2H
   if (h2h && h2h.partidos > 0) {
-    const esHome = equipoApuesta === homeTeam;
-    const winsEquipo = esHome ? h2h.wins1 : h2h.wins2;
-    const winsRival = esHome ? h2h.wins2 : h2h.wins1;
-    lineas.push(`⚔️ H2H: ${winsEquipo}W-${h2h.draws}D-${winsRival}L (últimos ${h2h.partidos})`);
+    if (equipoApuesta === 'Draw') {
+      // Para Draw: mostrar cuántos empates hubo
+      const pctDraw = ((h2h.draws / h2h.partidos) * 100).toFixed(0);
+      lineas.push(`⚔️ H2H: ${h2h.draws} empates en ${h2h.partidos} partidos (${pctDraw}%)`);
+      lineas.push(`📊 ${homeTeam} ${h2h.wins1}W - ${awayTeam} ${h2h.wins2}W`);
+    } else {
+      // Para picks de equipo: mostrar stats DESDE la perspectiva del equipo apostado
+      const esHome = equipoApuesta === homeTeam;
+      const rival = esHome ? awayTeam : homeTeam;
+      const winsEquipo = esHome ? h2h.wins1 : h2h.wins2;
+      const winsRival = esHome ? h2h.wins2 : h2h.wins1;
+      lineas.push(`⚔️ H2H ${equipoApuesta} vs ${rival}: ${winsEquipo}W-${h2h.draws}D-${winsRival}L (últ. ${h2h.partidos})`);
+    }
   }
 
   return lineas;

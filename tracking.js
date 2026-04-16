@@ -9,6 +9,7 @@
 
 import axios from 'axios';
 import * as db from './database.js';
+import * as sheets from './sheets.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -78,6 +79,12 @@ export async function actualizarClosingOdds(oddsData) {
         const clv = (pick.odds / mediana) - 1;
 
         await db.actualizarClosingOdds(pick.id, mediana, clv);
+        
+        // Actualizar también en Google Sheets
+        await sheets.actualizarPickEnSheets(pick.evento, pick.equipo_jugador, {
+          oddsClose: mediana
+        });
+        
         actualizados++;
 
         console.log(`   📉 CLV ${pick.evento} → ${pick.equipo_jugador}: opening=${pick.odds.toFixed(2)} closing=${mediana.toFixed(2)} CLV=${(clv * 100).toFixed(2)}%`);
@@ -173,6 +180,12 @@ export async function verificarResultados() {
             : -pick.kelly_percentage;
 
           await db.actualizarResultado(pick.id, resultado, ganancia);
+          
+          // Actualizar resultado en Google Sheets
+          await sheets.actualizarPickEnSheets(pick.evento, pick.equipo_jugador, {
+            resultado: resultado
+          });
+          
           resueltos++;
 
           const emoji = resultado === 'W' ? '✅' : '❌';
